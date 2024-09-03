@@ -39,11 +39,11 @@ impl Client {
         Ok(())
     }
 
-    pub async fn fetch_messages(&self) -> DynThreadSafeResult<Box<[Message]>> {
+    pub async fn fetch_messages(&self, max_count: u32) -> DynThreadSafeResult<Box<[Message]>> {
         let url: Uri = format!("{}/fetch_messages", &self.server_url)
             .parse()
             .unwrap();
-        let fetch_message_form = interface::FetchMessagesForm { max_count: 10 };
+        let fetch_message_form = interface::FetchMessagesForm { max_count };
         let response: FetchMessagesResponse = request(url, Method::GET, fetch_message_form).await?;
         Ok(response.messages)
     }
