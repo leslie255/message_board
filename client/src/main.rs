@@ -11,6 +11,7 @@ use std::env;
 use std::future::Future;
 
 use api::Client;
+use chrono::{DateTime, Local};
 use cursive::event::{Event, EventResult, Key};
 use cursive::traits::*;
 use cursive::view::ViewWrapper;
@@ -29,6 +30,11 @@ const MESSAGE_EDIT_VIEW_NAME: &str = "message_edit_view";
 
 struct State {
     api_client: Client,
+}
+
+fn format_message(Message { content, date }: &Message) -> String {
+    let date_formatted = <DateTime<Local>>::from(*date).format("%Y-%m-%d %H:%M:%S");
+    format!("[{date_formatted}] {content}")
 }
 
 /// Fetch new messages and update message list with it.
@@ -55,8 +61,8 @@ fn update_message_list_with(siv: &mut Cursive, messages: &[Message]) {
     messages
         .iter()
         .rev()
-        .map(|Message { content, date }| {
-            let text_view = TextView::new(format!("[{date}] {content}"));
+        .map(|message| {
+            let text_view = TextView::new(format_message(message));
             ListChild::Row(String::new(), Box::new(text_view))
         })
         .collect_into(&mut new_children);
