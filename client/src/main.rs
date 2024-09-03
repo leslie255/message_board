@@ -134,7 +134,7 @@ impl ViewWrapper for MessageListView {
 }
 
 fn main() {
-    let _logger = Logger::try_with_str("info, my::critical::module=trace")
+    let _logger = Logger::try_with_str("info")
         .unwrap()
         .log_to_file(FileSpec::default())
         .write_mode(WriteMode::BufferAndFlush)

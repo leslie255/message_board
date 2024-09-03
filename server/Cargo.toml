@@ -13,4 +13,6 @@ http-body-util = "0.1"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 interface = { path = "../interface" }
+log = { version = "0.4", features = ["std", "serde"] }
+flexi_logger = "0.29"
 

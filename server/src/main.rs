@@ -4,6 +4,7 @@ use std::sync::Arc;
 use bytes::{Buf, Bytes};
 use chrono::Utc;
 use database::{DataBase, Message};
+use flexi_logger::{Logger, WriteMode};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -28,6 +29,12 @@ struct ServerState {
 
 #[tokio::main]
 async fn main() -> DynThreadSafeResult<()> {
+    let _logger = Logger::try_with_str("info")
+        .unwrap()
+        .write_mode(WriteMode::BufferAndFlush)
+        .start()
+        .unwrap();
+
     let server_state = Arc::new(ServerState::default());
 
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 3000))).await?;
@@ -89,7 +96,7 @@ async fn handle_send_message(
         content: send_message_form.content.into(),
         date: Utc::now(),
     };
-    println!("Someone sent: {:?}", message);
+    log::info!("Someone sent: {:?}", message);
     server_state.database.add_message(message);
     let response_json = serde_json::to_string(&SendMessageResponse::ok()).unwrap();
     Ok(reponse(response_json))
@@ -116,7 +123,7 @@ async fn handle_fetch_message(
         messages: messages.into(),
     };
     let response_json = serde_json::to_string(&response).unwrap();
-    println!(
+    log::info!(
         "Someone fetched {} messages, giving them {} messages",
         fetch_message_form.max_count,
         response.messages.len(),
