@@ -22,6 +22,10 @@ impl Default for Client {
 }
 
 impl Client {
+    pub fn server_url(&self) -> &str {
+        &self.server_url
+    }
+
     pub fn with_server(mut server_url: String) -> Self {
         if server_url.chars().next_back().is_some_and(|c| c == '/') {
             server_url.pop().unwrap();
@@ -46,6 +50,23 @@ impl Client {
         let fetch_message_form = interface::FetchMessagesForm { max_count };
         let response: FetchMessagesResponse = request(url, Method::GET, fetch_message_form).await?;
         Ok(response.messages)
+    }
+
+    pub async fn test_connection(&self) -> bool {
+        self.test_connection_()
+            .await
+            .is_ok_and(std::convert::identity)
+    }
+
+    /// Helper function for `test_connection` until rust stablizes try blocks.
+   async fn test_connection_(&self) -> DynThreadSafeResult<bool> {
+        let url: Uri = format!("{}/hello", &self.server_url)
+            .parse()
+            .unwrap();
+        let response = request_raw(url, Method::GET, ()).await?;
+        let response = response.collect().await?.to_bytes().to_vec();
+        let response_string = String::from_utf8(response).unwrap();
+        Ok(response_string.as_str() == "HELLO, WORLD")
     }
 }
 
@@ -101,7 +122,7 @@ async fn request_and_get_string<T: DeserializeOwned>(
         .collect()
         .await?
         .to_bytes();
-    let response_string = String::from_utf8(response_body.to_vec()).unwrap();
+    let response_string = String::from_utf8(response_body.to_vec())?;
     let x = serde_json::from_reader(response_body.reader())?;
     Ok((x, response_string))
 }

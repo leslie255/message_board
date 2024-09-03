@@ -7,6 +7,9 @@ pub type DynThreadSafeError = Box<dyn std::error::Error + Send + Sync>;
 pub type DynResult<T> = Result<T, DynError>;
 pub type DynThreadSafeResult<T> = Result<T, DynThreadSafeError>;
 
+use std::env;
+use std::future::Future;
+
 use api::Client;
 use cursive::event::{Event, EventResult, Key};
 use cursive::traits::*;
@@ -33,9 +36,7 @@ fn refresh_message_list(siv: &mut Cursive) {
     log::info!("[{}:{}] here", file!(), line!());
     let new_messages = {
         let api_client = &mut siv.user_data::<State>().unwrap().api_client;
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(api_client.fetch_messages(DISPLAY_MESSAGE_COUNT as u32))
-            .unwrap()
+        block_on(api_client.fetch_messages(DISPLAY_MESSAGE_COUNT as u32)).unwrap()
     };
     log::info!("[{}:{}] here", file!(), line!());
     update_message_list_with(siv, &new_messages);
@@ -70,8 +71,7 @@ fn send_message(siv: &mut Cursive, text: &str) {
         view.set_content(""); // Clear the input field after sending.
     });
     let api_client = &mut siv.user_data::<State>().unwrap().api_client;
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(api_client.send_message(text.into())).unwrap();
+    block_on(api_client.send_message(text.into())).unwrap();
     refresh_message_list(siv);
 }
 
@@ -133,6 +133,10 @@ impl ViewWrapper for MessageListView {
     }
 }
 
+fn block_on<F: Future>(f: F) -> F::Output {
+    tokio::runtime::Runtime::new().unwrap().block_on(f)
+}
+
 fn main() {
     let _logger = Logger::try_with_str("info")
         .unwrap()
@@ -141,9 +145,24 @@ fn main() {
         .start()
         .unwrap();
 
+    let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:3000".into());
+
     let state = State {
-        api_client: Client::with_server("http://127.0.0.1:3000".into()),
+        api_client: Client::with_server(server_url),
     };
+
+    let connection_ok = block_on(state.api_client.test_connection());
+    if !connection_ok {
+        log::error!(
+            "Can't connect to server {:?}",
+            state.api_client.server_url()
+        );
+        println!(
+            "Can't connect to server {:?}",
+            state.api_client.server_url()
+        );
+        std::process::exit(1);
+    }
 
     let mut siv = cursive::default();
     siv.set_user_data(state);

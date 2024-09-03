@@ -80,6 +80,7 @@ async fn handle_request(
 }
 
 async fn handle_hello() -> DynThreadSafeResult<Response<Full<Bytes>>> {
+    log::info!("Someone said hello");
     Ok(reponse("HELLO, WORLD"))
 }
 
