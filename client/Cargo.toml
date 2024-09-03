@@ -7,9 +7,11 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
+serde_json = "1.0"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 interface = { path = "../interface" }
+cursive = "0.21"
 
