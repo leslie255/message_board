@@ -22,11 +22,14 @@ use cursive::views::{
 use cursive::Cursive;
 use flexi_logger::{FileSpec, Logger, WriteMode};
 use interface::Message;
+use unicode_width::UnicodeWidthChar;
 
 const DISPLAY_MESSAGE_COUNT: usize = 20;
 
 const MESSAGES_LIST_VIEW_NAME: &str = "message_list";
 const MESSAGE_EDIT_VIEW_NAME: &str = "message_edit_view";
+
+const LINE_WIDTH: usize = 80;
 
 struct State {
     api_client: Client,
@@ -34,7 +37,8 @@ struct State {
 
 fn format_message(Message { content, date }: &Message) -> String {
     let date_formatted = <DateTime<Local>>::from(*date).format("%Y-%m-%d %H:%M:%S");
-    format!("[{date_formatted}] {content}")
+    let formatted = format!("[{date_formatted}] {content}");
+    wrap_text(&formatted, LINE_WIDTH)
 }
 
 /// Fetch new messages and update message list with it.
@@ -50,6 +54,7 @@ fn refresh_message_list(siv: &mut Cursive) {
 }
 
 fn update_message_list_with(siv: &mut Cursive, messages: &[Message]) {
+    // FIXME: Multi-line messages not make the whole list UI longer.
     log::info!("[{}:{}] here", file!(), line!());
     log::info!("[{}:{}] here", file!(), line!());
     let mut message_list = siv.find_name::<ListView>(MESSAGES_LIST_VIEW_NAME).unwrap();
@@ -73,12 +78,45 @@ fn update_message_list_with(siv: &mut Cursive, messages: &[Message]) {
 
 /// Send text as message, clears the editor.
 fn send_message(siv: &mut Cursive, text: &str) {
+    let is_invisible = text.is_empty() || !text.chars().any(|c| !c.is_whitespace());
     siv.call_on_name(MESSAGE_EDIT_VIEW_NAME, |view: &mut EditView| {
         view.set_content(""); // Clear the input field after sending.
     });
-    let api_client = &mut siv.user_data::<State>().unwrap().api_client;
-    block_on(api_client.send_message(text.into())).unwrap();
-    refresh_message_list(siv);
+    if !is_invisible {
+        let api_client = &mut siv.user_data::<State>().unwrap().api_client;
+        block_on(api_client.send_message(text.into())).unwrap();
+        refresh_message_list(siv);
+    }
+}
+
+/// Linewrap a string.
+/// Also removes control characters.
+/// FIXME: Optimize this such that it returns `Cow<str>` and has zero allocations when not needed.
+fn wrap_text(input: &str, max_width: usize) -> String {
+    let mut current_width = 0;
+    let mut last_break = 0;
+    let mut wrapped = String::with_capacity(input.len() + 4);
+
+    for (i, c) in input.char_indices() {
+        let char_width = match c.width() {
+            Some(width) => width,
+            None => continue,
+        };
+
+        if current_width + char_width > max_width {
+            wrapped.push_str(&input[last_break..i]);
+            wrapped.push('\n');
+            last_break = i;
+            current_width = 0;
+        }
+
+        current_width += char_width;
+    }
+
+    // Add the remaining part of the string
+    wrapped.push_str(&input[last_break..]);
+
+    wrapped
 }
 
 struct MessageEditView {
@@ -91,7 +129,7 @@ impl MessageEditView {
             inner: EditView::new()
                 .on_submit(send_message)
                 .with_name(MESSAGE_EDIT_VIEW_NAME)
-                .fixed_width(80),
+                .fixed_width(LINE_WIDTH),
         }
     }
 }
@@ -154,7 +192,7 @@ fn main() {
     let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:3000".into());
 
     let state = State {
-        api_client: Client::with_server(server_url),
+        api_client: Client::with_server(server_url.clone()),
     };
 
     println!("Saying hello with the server");
@@ -177,7 +215,7 @@ fn main() {
     let message_list = MessageListView::new();
 
     let layout = LinearLayout::vertical()
-        .child(Dialog::around(message_list).title("Messages"))
+        .child(Dialog::around(message_list).title(server_url.to_string()))
         .child(MessageEditView::new());
 
     siv.add_layer(layout);

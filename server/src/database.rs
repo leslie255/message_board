@@ -2,7 +2,7 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use chrono::{DateTime, Duration, Utc};
@@ -36,7 +36,7 @@ fn vec_deque_remove_before<T>(vec: &mut VecDeque<T>, idx: usize) {
 
 impl DataBase {
     /// Delete all messages before a date.
-    pub fn purge_before(&mut self, before_date: DateTime<Utc>) {
+    pub fn purge_before(&self, before_date: DateTime<Utc>) {
         let mut messages = self.messages.lock().unwrap();
         if messages.front().is_some_and(|x| x.date < before_date) {
             return;
@@ -49,33 +49,39 @@ impl DataBase {
         };
     }
 
-    pub fn purge_6_hours_ago(&mut self) {
+    pub fn purge_6_hours_ago(&self) {
         let six_hours_ago = Utc::now() - Duration::hours(6);
         self.purge_before(six_hours_ago);
     }
 
+    fn messages(&self) -> MutexGuard<VecDeque<Message>> {
+        self.messages.lock().unwrap()
+    }
+
     pub fn add_message(&self, message: Message) {
-        self.messages.lock().unwrap().push_front(message);
+        let is_invisible =
+            message.content.is_empty() || !message.content.chars().any(|c| !c.is_whitespace());
+        if !is_invisible {
+            self.messages().push_back(message);
+        }
     }
 
     pub fn message_count(&self) -> usize {
-        self.messages.lock().unwrap().len()
+        self.messages().len()
     }
 
     pub fn for_each_message(&self, mut f: impl FnMut(&Message)) {
-        for message in self.messages.lock().unwrap().iter() {
+        for message in self.messages().iter() {
             f(message);
         }
     }
 
     pub fn latest_messages(&self, count: usize) -> Vec<Message> {
-        self
-            .messages
-            .lock()
-            .unwrap()
-            .iter()
-            .take(count)
-            .cloned()
-            .collect()
+        self.messages().iter().rev().take(count).cloned().collect()
+    }
+
+    /// Returns `None` if there are no messages.
+    pub fn latest_message_date(&self) -> Option<DateTime<Utc>> {
+        self.messages().back().map(|message| message.date)
     }
 }
