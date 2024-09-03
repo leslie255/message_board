@@ -91,7 +91,7 @@ impl MessageEditView {
             inner: EditView::new()
                 .on_submit(send_message)
                 .with_name(MESSAGE_EDIT_VIEW_NAME)
-                .fixed_width(50),
+                .fixed_width(80),
         }
     }
 }
@@ -157,6 +157,7 @@ fn main() {
         api_client: Client::with_server(server_url),
     };
 
+    println!("Saying hello with the server");
     let connection_ok = block_on(state.api_client.test_connection());
     if !connection_ok {
         log::error!(
