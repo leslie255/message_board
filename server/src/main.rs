@@ -1,3 +1,4 @@
+use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -37,7 +38,22 @@ async fn main() -> DynThreadSafeResult<()> {
 
     let server_state = Arc::new(ServerState::default());
 
-    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 3000))).await?;
+    let port_string = env::args().nth(1);
+    let port_string = port_string.as_deref().unwrap_or_else(|| {
+        log::warn!("Unspecified local address, using 3000");
+        "3000"
+    });
+    let port = port_string.parse::<u16>().unwrap_or_else(|_| {
+        log::warn!("Invalid port number {port_string:?}, using 3000");
+        3000
+    });
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+
+    if let Ok(local_addr) = listener.local_addr() {
+        log::info!("Server listening on {local_addr}");
+    } else {
+        log::info!("Server listening on unknown address");
+    }
 
     loop {
         let (tcp, addr) = listener.accept().await?;
