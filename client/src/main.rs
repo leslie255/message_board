@@ -1,4 +1,4 @@
-#![feature(iter_collect_into)]
+#![feature(iter_collect_into, never_type)]
 
 mod api;
 
@@ -7,10 +7,11 @@ pub type DynThreadSafeError = Box<dyn std::error::Error + Send + Sync>;
 pub type DynResult<T> = Result<T, DynError>;
 pub type DynThreadSafeResult<T> = Result<T, DynThreadSafeError>;
 
+use std::collections::VecDeque;
 use std::env;
+use std::fmt::Debug;
 use std::future::Future;
 
-use api::Client;
 use chrono::{DateTime, Local};
 use cursive::event::{Event, EventResult, Key};
 use cursive::traits::*;
@@ -31,8 +32,73 @@ const MESSAGE_EDIT_VIEW_NAME: &str = "message_edit_view";
 
 const LINE_WIDTH: usize = 80;
 
-struct State {
-    api_client: Client,
+/// Like `Result::unwrap`, but `log::error!(..)` on error instead of printing.
+pub trait PrettyUnwrap<T, E: Debug> {
+    #[track_caller]
+    fn pretty_unwrap(self) -> T;
+}
+
+impl<T, E: Debug> PrettyUnwrap<T, E> for Result<T, E> {
+    /// Like `Result::unwrap`, but `log::error!(..)` on error instead of printing.
+    #[track_caller]
+    fn pretty_unwrap(self) -> T {
+        match self {
+            Ok(x) => x,
+            Err(error) => {
+                log::error!("{error:?}");
+                panic!();
+            }
+        }
+    }
+}
+
+/// Blockingly poll a future to get its output.
+pub trait Wait: Future {
+    /// Blockingly poll a future to get its output.
+    fn wait(self) -> Self::Output;
+}
+
+impl<F: Future> Wait for F {
+    fn wait(self) -> Self::Output {
+        tokio::runtime::Runtime::new()
+            .pretty_unwrap()
+            .block_on(self)
+    }
+}
+
+#[derive(Clone)]
+struct AppState {
+    api: api::Client,
+    /// Must be in chronological order, from oldest (front) to latest (back).
+    messages: VecDeque<Message>,
+}
+
+impl AppState {
+    pub fn fetch_new_messages_if_needed(&mut self) -> DynThreadSafeResult<()> {
+        let local_latest = self.messages.back().map(|message| message.date);
+        let remote_latest = self.api.fetch_latest_update_date().wait()?;
+        let need_update = match (local_latest, remote_latest) {
+            (Some(local), Some(remote)) => remote >= local,
+            (None, None) => false,
+            _ => true,
+        };
+        if need_update {
+            let new_messages = self
+                .api
+                .fetch_messages(DISPLAY_MESSAGE_COUNT as u32, local_latest)
+                .wait()?;
+            // To pervent latest message being repeated.
+            if let Some(local_latest) = local_latest {
+                // FIXME: Optimize this with assumption of message being ordered chronologically.
+                self.messages.retain(|message| message.date != local_latest);
+            }
+            new_messages
+                .into_vec()
+                .into_iter()
+                .collect_into(&mut self.messages);
+        }
+        Ok(())
+    }
 }
 
 fn format_message(Message { content, date }: &Message) -> String {
@@ -43,37 +109,28 @@ fn format_message(Message { content, date }: &Message) -> String {
 
 /// Fetch new messages and update message list with it.
 fn refresh_message_list(siv: &mut Cursive) {
-    log::info!("[{}:{}] here", file!(), line!());
-    let new_messages = {
-        let api_client = &mut siv.user_data::<State>().unwrap().api_client;
-        block_on(api_client.fetch_messages(DISPLAY_MESSAGE_COUNT as u32)).unwrap()
+    let app_state = siv.user_data::<AppState>().unwrap();
+    match app_state.fetch_new_messages_if_needed() {
+        Ok(()) => (),
+        Err(e) => {
+            log::error!("Error fetching new messages: {e:?}");
+            return;
+        },
     };
-    log::info!("[{}:{}] here", file!(), line!());
-    update_message_list_with(siv, &new_messages);
-    log::info!("[{}:{}] here", file!(), line!());
-}
-
-fn update_message_list_with(siv: &mut Cursive, messages: &[Message]) {
-    // FIXME: Multi-line messages not make the whole list UI longer.
-    log::info!("[{}:{}] here", file!(), line!());
-    log::info!("[{}:{}] here", file!(), line!());
-    let mut message_list = siv.find_name::<ListView>(MESSAGES_LIST_VIEW_NAME).unwrap();
-    log::info!("[{}:{}] here", file!(), line!());
     let mut new_children: Vec<ListChild> = Vec::with_capacity(DISPLAY_MESSAGE_COUNT);
-    (messages.len()..DISPLAY_MESSAGE_COUNT)
+    (app_state.messages.len()..DISPLAY_MESSAGE_COUNT)
         .map(|_| ListChild::Row(String::new(), Box::new(DummyView::new())))
         .collect_into(&mut new_children);
-    messages
+    app_state
+        .messages
         .iter()
-        .rev()
         .map(|message| {
             let text_view = TextView::new(format_message(message));
             ListChild::Row(String::new(), Box::new(text_view))
         })
         .collect_into(&mut new_children);
-    log::info!("[{}:{}] here", file!(), line!());
+    let mut message_list = siv.find_name::<ListView>(MESSAGES_LIST_VIEW_NAME).unwrap();
     message_list.set_children(new_children);
-    log::info!("[{}:{}] here", file!(), line!());
 }
 
 /// Send text as message, clears the editor.
@@ -83,8 +140,8 @@ fn send_message(siv: &mut Cursive, text: &str) {
         view.set_content(""); // Clear the input field after sending.
     });
     if !is_invisible {
-        let api_client = &mut siv.user_data::<State>().unwrap().api_client;
-        block_on(api_client.send_message(text.into())).unwrap();
+        let api_client = &mut siv.user_data::<AppState>().unwrap().api;
+        api_client.send_message(text.into()).wait().pretty_unwrap();
         refresh_message_list(siv);
     }
 }
@@ -140,7 +197,7 @@ impl ViewWrapper for MessageEditView {
     fn wrap_on_event(&mut self, event: Event) -> EventResult {
         match event {
             Event::Key(Key::Esc) => EventResult::with_cb(|siv| {
-                siv.focus_name("message_list").unwrap();
+                siv.focus_name("message_list").pretty_unwrap();
             }),
             event => self.inner.on_event(event),
         }
@@ -177,10 +234,6 @@ impl ViewWrapper for MessageListView {
     }
 }
 
-fn block_on<F: Future>(f: F) -> F::Output {
-    tokio::runtime::Runtime::new().unwrap().block_on(f)
-}
-
 fn main() {
     let _logger = Logger::try_with_str("info")
         .unwrap()
@@ -191,21 +244,16 @@ fn main() {
 
     let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:3000".into());
 
-    let state = State {
-        api_client: Client::with_server(server_url.clone()),
+    let state = AppState {
+        api: api::Client::with_server(server_url.clone()),
+        messages: VecDeque::new(),
     };
 
     println!("Saying hello with the server");
-    let connection_ok = block_on(state.api_client.test_connection());
+    let connection_ok = state.api.test_connection().wait();
     if !connection_ok {
-        log::error!(
-            "Can't connect to server {:?}",
-            state.api_client.server_url()
-        );
-        println!(
-            "Can't connect to server {:?}",
-            state.api_client.server_url()
-        );
+        log::error!("Can't connect to server {:?}", state.api.server_url());
+        println!("Can't connect to server {:?}", state.api.server_url());
         std::process::exit(1);
     }
 

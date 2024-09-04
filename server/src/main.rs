@@ -12,7 +12,10 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use interface::{FetchMessagesForm, FetchMessagesResponse, SendMessageForm, SendMessageResponse};
+use interface::{
+    FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
+    FetchMessagesResponse, SendMessageForm, SendMessageResponse,
+};
 use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 
@@ -91,6 +94,9 @@ async fn handle_request(
         (&Method::GET, "/fetch_messages") => {
             handle_fetch_message(server_state, request.into_body()).await
         }
+        (&Method::GET, "/fetch_latest_update_date") => {
+            handle_fetch_latest_update_date(server_state, request.into_body()).await
+        }
         (method, path) => Ok(Response::new(Full::new(Bytes::from(format!(
             "404 NOT FOUND: {method} {path:?}"
         ))))),
@@ -106,13 +112,13 @@ async fn handle_send_message(
     server_state: Arc<ServerState>,
     body: Incoming,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    let Ok(send_message_form) = read_request_body::<SendMessageForm>(body).await else {
+    let Ok(form) = read_request_body::<SendMessageForm>(body).await else {
         return Ok(reponse(
             serde_json::to_string(&SendMessageResponse::not_ok()).unwrap(),
         ));
     };
     let message = Message {
-        content: send_message_form.content.into(),
+        content: form.content.into(),
         date: Utc::now(),
     };
     log::info!("Someone sent: {:?}", message);
@@ -125,14 +131,20 @@ async fn handle_fetch_message(
     server_state: Arc<ServerState>,
     body: Incoming,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    let Ok(fetch_message_form) = read_request_body::<FetchMessagesForm>(body).await else {
+    let Ok(form) = read_request_body::<FetchMessagesForm>(body).await else {
         return Ok(reponse("invalid /fetch_message request"));
     };
-    let count = u32::min(fetch_message_form.max_count, 50);
+    let count = u32::min(form.max_count, 50);
     let messages: Vec<interface::Message> = server_state
         .database
         .latest_messages(count as usize)
         .into_iter()
+        .filter(|message| {
+            // FIXME: optimize this with the assumption of messages being ordered chronologically.
+            form.since
+                .map(|since| message.date >= since)
+                .unwrap_or(true)
+        })
         .map(|message| interface::Message {
             content: message.content.as_ref().to_owned().into(),
             date: message.date,
@@ -144,8 +156,27 @@ async fn handle_fetch_message(
     let response_json = serde_json::to_string(&response).unwrap();
     log::info!(
         "Someone fetched {} messages, giving them {} messages",
-        fetch_message_form.max_count,
+        form.max_count,
         response.messages.len(),
+    );
+    Ok(reponse(response_json))
+}
+
+async fn handle_fetch_latest_update_date(
+    server_state: Arc<ServerState>,
+    body: Incoming,
+) -> DynThreadSafeResult<Response<Full<Bytes>>> {
+    let Ok(_) = read_request_body::<FetchLatestUpdateDateForm>(body).await else {
+        return Ok(reponse("invalid /fetch_latest_update_date request"));
+    };
+    let latest_message_date = server_state.database.latest_message_date();
+    let response = FetchLatestUpdateDateResponse {
+        latest_update_date: latest_message_date,
+    };
+    let response_json = serde_json::to_string(&response).unwrap();
+    log::info!(
+        "Someone asked the latest update, told them {:?}",
+        response.latest_update_date,
     );
     Ok(reponse(response_json))
 }

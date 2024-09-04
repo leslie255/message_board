@@ -77,7 +77,7 @@ impl DataBase {
     }
 
     pub fn latest_messages(&self, count: usize) -> Vec<Message> {
-        self.messages().iter().rev().take(count).cloned().collect()
+        self.messages().iter().take(count).cloned().collect()
     }
 
     /// Returns `None` if there are no messages.
