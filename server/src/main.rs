@@ -155,8 +155,9 @@ async fn handle_fetch_message(
     };
     let response_json = serde_json::to_string(&response).unwrap();
     log::info!(
-        "Someone fetched {} messages, giving them {} messages",
+        "Someone fetched {} messages since {:?}, giving them {} messages",
         form.max_count,
+        form.since,
         response.messages.len(),
     );
     Ok(reponse(response_json))
