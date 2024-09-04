@@ -10,8 +10,9 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Method, Request, Response};
+use hyper::{Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use interface::routes::{self, HttpMethod};
 use interface::{
     FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
     FetchMessagesResponse, SendMessageForm, SendMessageResponse,
@@ -86,15 +87,12 @@ async fn handle_request(
     }
     let method = request.method();
     let path = request.uri().path();
-    match (method, path) {
-        (&Method::GET, "/hello") => handle_hello().await,
-        (&Method::POST, "/send_message") => {
-            handle_send_message(server_state, request.into_body()).await
-        }
-        (&Method::GET, "/fetch_messages") => {
-            handle_fetch_message(server_state, request.into_body()).await
-        }
-        (&Method::GET, "/fetch_latest_update_date") => {
+    log::info!("Incoming request: {method} {path:?}");
+    match (HttpMethod::from(method), path) {
+        routes::HELLO => handle_hello().await,
+        routes::SEND_MESSAGE => handle_send_message(server_state, request.into_body()).await,
+        routes::FETCH_MESSAGES => handle_fetch_message(server_state, request.into_body()).await,
+        routes::FETCH_LATEST_UPDATE_DATE => {
             handle_fetch_latest_update_date(server_state, request.into_body()).await
         }
         (method, path) => Ok(Response::new(Full::new(Bytes::from(format!(
@@ -104,7 +102,6 @@ async fn handle_request(
 }
 
 async fn handle_hello() -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    log::info!("Someone said hello");
     Ok(reponse("HELLO, WORLD"))
 }
 
@@ -121,7 +118,7 @@ async fn handle_send_message(
         content: form.content.into(),
         date: Utc::now(),
     };
-    log::info!("Someone sent: {:?}", message);
+    log::info!("message: {message:?}");
     server_state.database.add_message(message);
     let response_json = serde_json::to_string(&SendMessageResponse::ok()).unwrap();
     Ok(reponse(response_json))
@@ -134,6 +131,7 @@ async fn handle_fetch_message(
     let Ok(form) = read_request_body::<FetchMessagesForm>(body).await else {
         return Ok(reponse("invalid /fetch_message request"));
     };
+    log::info!("form: {form:?}");
     let count = u32::min(form.max_count, 50);
     let messages: Vec<interface::Message> = server_state
         .database
@@ -175,10 +173,7 @@ async fn handle_fetch_latest_update_date(
         latest_update_date: latest_message_date,
     };
     let response_json = serde_json::to_string(&response).unwrap();
-    log::info!(
-        "Someone asked the latest update, told them {:?}",
-        response.latest_update_date,
-    );
+    log::info!("response: {response_json:?}",);
     Ok(reponse(response_json))
 }
 

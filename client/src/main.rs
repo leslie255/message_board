@@ -1,16 +1,10 @@
 #![feature(iter_collect_into, never_type)]
 
 mod api;
-
-pub type DynError = Box<dyn std::error::Error>;
-pub type DynThreadSafeError = Box<dyn std::error::Error + Send + Sync>;
-pub type DynResult<T> = Result<T, DynError>;
-pub type DynThreadSafeResult<T> = Result<T, DynThreadSafeError>;
+mod utils;
 
 use std::collections::VecDeque;
 use std::env;
-use std::fmt::Debug;
-use std::future::Future;
 
 use chrono::{DateTime, Local};
 use cursive::event::{Event, EventResult, Key};
@@ -25,46 +19,19 @@ use flexi_logger::{FileSpec, Logger, WriteMode};
 use interface::Message;
 use unicode_width::UnicodeWidthChar;
 
+use utils::{PrettyUnwrap, Wait};
+
+pub type DynError = Box<dyn std::error::Error>;
+pub type DynThreadSafeError = Box<dyn std::error::Error + Send + Sync>;
+pub type DynResult<T> = Result<T, DynError>;
+pub type DynThreadSafeResult<T> = Result<T, DynThreadSafeError>;
+
 const DISPLAY_MESSAGE_COUNT: usize = 20;
 
 const MESSAGES_LIST_VIEW_NAME: &str = "message_list";
 const MESSAGE_EDIT_VIEW_NAME: &str = "message_edit_view";
 
 const LINE_WIDTH: usize = 80;
-
-/// Like `Result::unwrap`, but `log::error!(..)` on error instead of printing.
-pub trait PrettyUnwrap<T, E: Debug> {
-    #[track_caller]
-    fn pretty_unwrap(self) -> T;
-}
-
-impl<T, E: Debug> PrettyUnwrap<T, E> for Result<T, E> {
-    /// Like `Result::unwrap`, but `log::error!(..)` on error instead of printing.
-    #[track_caller]
-    fn pretty_unwrap(self) -> T {
-        match self {
-            Ok(x) => x,
-            Err(error) => {
-                log::error!("{error:?}");
-                panic!();
-            }
-        }
-    }
-}
-
-/// Blockingly poll a future to get its output.
-pub trait Wait: Future {
-    /// Blockingly poll a future to get its output.
-    fn wait(self) -> Self::Output;
-}
-
-impl<F: Future> Wait for F {
-    fn wait(self) -> Self::Output {
-        tokio::runtime::Runtime::new()
-            .pretty_unwrap()
-            .block_on(self)
-    }
-}
 
 #[derive(Clone)]
 struct AppState {
@@ -115,7 +82,7 @@ fn refresh_message_list(siv: &mut Cursive) {
         Err(e) => {
             log::error!("Error fetching new messages: {e:?}");
             return;
-        },
+        }
     };
     let mut new_children: Vec<ListChild> = Vec::with_capacity(DISPLAY_MESSAGE_COUNT);
     (app_state.messages.len()..DISPLAY_MESSAGE_COUNT)
