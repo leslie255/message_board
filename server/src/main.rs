@@ -2,6 +2,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use bytes::buf::Reader;
 use bytes::{Buf, Bytes};
 use chrono::Utc;
 use database::{DataBase, Message};
@@ -10,7 +11,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use interface::routes::{self, HttpMethod};
 use interface::{
@@ -78,42 +79,75 @@ async fn main() -> DynThreadSafeResult<()> {
     }
 }
 
+// Half ass emulation of Axum's extractors.
+
+pub struct Json<T: DeserializeOwned>(pub T);
+
+impl<T: DeserializeOwned, B: Buf> TryFrom<Reader<B>> for Json<T> {
+    type Error = serde_json::Error;
+    fn try_from(value: Reader<B>) -> Result<Self, Self::Error> {
+        serde_json::from_reader(value).map(Self)
+    }
+}
+
+macro_rules! extract_json {
+    ($request_body:expr) => {{
+        let reader = $request_body.collect().await?.aggregate().reader();
+        match reader.try_into() {
+            Ok(extracted) => extracted,
+            Err(_) => return Ok(respond_with_status(StatusCode::BAD_REQUEST, Bytes::new())),
+        }
+    }};
+}
+
 async fn handle_request(
     server_state: Arc<ServerState>,
     request: Request<Incoming>,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
     if request.version() != hyper::Version::HTTP_11 {
-        reponse("not HTTP/1.1, abort connection");
+        respond_with_status(
+            StatusCode::HTTP_VERSION_NOT_SUPPORTED,
+            "not HTTP/1.1, abort connection",
+        );
+        log::info!("Got request with unsupported HTTP version");
+    }
+    if let Some(upgrade) = request.headers().get("upgrade") {
+        if upgrade == "websocket" {
+            log::error!("Client wants to upgrade to websocket");
+            respond_with_status(StatusCode::UPGRADE_REQUIRED, "WebSocket not supported yet");
+        }
     }
     let method = request.method();
     let path = request.uri().path();
     log::info!("Incoming request: {method} {path:?}");
-    match (HttpMethod::from(method), path) {
-        routes::HELLO => handle_hello().await,
-        routes::SEND_MESSAGE => handle_send_message(server_state, request.into_body()).await,
-        routes::FETCH_MESSAGES => handle_fetch_message(server_state, request.into_body()).await,
-        routes::FETCH_LATEST_UPDATE_DATE => {
-            handle_fetch_latest_update_date(server_state, request.into_body()).await
+    let response = match (HttpMethod::from(method), path) {
+        routes::HELLO => handle_hello().await?,
+        routes::SEND_MESSAGE => {
+            handle_send_message(server_state, extract_json!(request.into_body())).await?
         }
-        (method, path) => Ok(Response::new(Full::new(Bytes::from(format!(
-            "404 NOT FOUND: {method} {path:?}"
-        ))))),
-    }
+        routes::FETCH_MESSAGES => {
+            handle_fetch_message(server_state, extract_json!(request.into_body())).await?
+        }
+        routes::FETCH_LATEST_UPDATE_DATE => {
+            handle_fetch_latest_update_date(server_state, extract_json!(request.into_body()))
+                .await?
+        }
+        (method, path) => respond_with_status(
+            StatusCode::NOT_FOUND,
+            format!("404 Not found: {method} {path}"),
+        ),
+    };
+    Ok(response)
 }
 
 async fn handle_hello() -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    Ok(reponse("HELLO, WORLD"))
+    Ok(respond("HELLO, WORLD"))
 }
 
 async fn handle_send_message(
     server_state: Arc<ServerState>,
-    body: Incoming,
+    Json(form): Json<SendMessageForm>,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    let Ok(form) = read_request_body::<SendMessageForm>(body).await else {
-        return Ok(reponse(
-            serde_json::to_string(&SendMessageResponse::not_ok()).unwrap(),
-        ));
-    };
     let message = Message {
         content: form.content.into(),
         date: Utc::now(),
@@ -121,16 +155,13 @@ async fn handle_send_message(
     log::info!("message: {message:?}");
     server_state.database.add_message(message);
     let response_json = serde_json::to_string(&SendMessageResponse::ok()).unwrap();
-    Ok(reponse(response_json))
+    Ok(respond(response_json))
 }
 
 async fn handle_fetch_message(
     server_state: Arc<ServerState>,
-    body: Incoming,
+    Json(form): Json<FetchMessagesForm>,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    let Ok(form) = read_request_body::<FetchMessagesForm>(body).await else {
-        return Ok(reponse("invalid /fetch_message request"));
-    };
     log::info!("form: {form:?}");
     let count = u32::min(form.max_count, 50);
     let messages: Vec<interface::Message> = server_state
@@ -158,30 +189,29 @@ async fn handle_fetch_message(
         form.since,
         response.messages.len(),
     );
-    Ok(reponse(response_json))
+    Ok(respond(response_json))
 }
 
 async fn handle_fetch_latest_update_date(
     server_state: Arc<ServerState>,
-    body: Incoming,
+    Json(_form): Json<FetchLatestUpdateDateForm>,
 ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
-    let Ok(_) = read_request_body::<FetchLatestUpdateDateForm>(body).await else {
-        return Ok(reponse("invalid /fetch_latest_update_date request"));
-    };
     let latest_message_date = server_state.database.latest_message_date();
     let response = FetchLatestUpdateDateResponse {
         latest_update_date: latest_message_date,
     };
     let response_json = serde_json::to_string(&response).unwrap();
     log::info!("response: {response_json:?}",);
-    Ok(reponse(response_json))
+    Ok(respond(response_json))
 }
 
-async fn read_request_body<T: DeserializeOwned>(request: Incoming) -> DynThreadSafeResult<T> {
-    let body = request.collect().await?.aggregate();
-    serde_json::from_reader(body.reader()).map_err(Into::into)
+fn respond(bytes: impl Into<Bytes>) -> Response<Full<Bytes>> {
+    respond_with_status(StatusCode::OK, bytes)
 }
 
-fn reponse(s: impl Into<Bytes>) -> Response<Full<Bytes>> {
-    Response::new(Full::new(s.into()))
+fn respond_with_status(status: StatusCode, bytes: impl Into<Bytes>) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .body(Full::new(bytes.into()))
+        .unwrap()
 }

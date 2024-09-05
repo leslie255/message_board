@@ -41,7 +41,7 @@ struct AppState {
 }
 
 impl AppState {
-    pub fn fetch_new_messages_if_needed(&mut self) -> DynThreadSafeResult<()> {
+    pub fn fetch_new_messages_if_needed(&mut self) -> DynThreadSafeResult<bool> {
         let local_latest = self.messages.back().map(|message| message.date);
         let remote_latest = self.api.fetch_latest_update_date().wait()?;
         let need_update = match (local_latest, remote_latest) {
@@ -49,6 +49,7 @@ impl AppState {
             (None, None) => false,
             _ => true,
         };
+        log::info!("local: {local_latest:?}, remote: {remote_latest:?}, need_update: {need_update}");
         if need_update {
             let new_messages = self
                 .api
@@ -64,7 +65,7 @@ impl AppState {
                 .into_iter()
                 .collect_into(&mut self.messages);
         }
-        Ok(())
+        Ok(need_update)
     }
 }
 
@@ -77,27 +78,39 @@ fn format_message(Message { content, date }: &Message) -> String {
 /// Fetch new messages and update message list with it.
 fn refresh_message_list(siv: &mut Cursive) {
     let app_state = siv.user_data::<AppState>().unwrap();
-    match app_state.fetch_new_messages_if_needed() {
-        Ok(()) => (),
+    let need_update = match app_state.fetch_new_messages_if_needed() {
+        Ok(x) => x,
         Err(e) => {
             log::error!("Error fetching new messages: {e:?}");
             return;
         }
     };
-    let mut new_children: Vec<ListChild> = Vec::with_capacity(DISPLAY_MESSAGE_COUNT);
-    (app_state.messages.len()..DISPLAY_MESSAGE_COUNT)
-        .map(|_| ListChild::Row(String::new(), Box::new(DummyView::new())))
-        .collect_into(&mut new_children);
-    app_state
-        .messages
-        .iter()
-        .map(|message| {
-            let text_view = TextView::new(format_message(message));
-            ListChild::Row(String::new(), Box::new(text_view))
-        })
-        .collect_into(&mut new_children);
-    let mut message_list = siv.find_name::<ListView>(MESSAGES_LIST_VIEW_NAME).unwrap();
-    message_list.set_children(new_children);
+    if need_update {
+        log::info!("[{}:{}] here", file!(), line!());
+        let mut new_children: Vec<ListChild> = Vec::with_capacity(DISPLAY_MESSAGE_COUNT);
+        if app_state.messages.len() < DISPLAY_MESSAGE_COUNT {
+            (app_state.messages.len()..DISPLAY_MESSAGE_COUNT)
+                .map(|_| ListChild::Row(String::new(), Box::new(DummyView::new())))
+                .collect_into(&mut new_children);
+        }
+        log::info!("messages: {:#?}", app_state.messages);
+        app_state
+            .messages
+            .iter()
+            .skip(
+                app_state
+                    .messages
+                    .len()
+                    .saturating_sub(DISPLAY_MESSAGE_COUNT),
+            )
+            .map(|message| {
+                let text_view = TextView::new(format_message(message));
+                ListChild::Row(String::new(), Box::new(text_view))
+            })
+            .collect_into(&mut new_children);
+        let mut message_list = siv.find_name::<ListView>(MESSAGES_LIST_VIEW_NAME).unwrap();
+        message_list.set_children(new_children);
+    }
 }
 
 /// Send text as message, clears the editor.

@@ -54,6 +54,7 @@ impl DataBase {
         self.purge_before(six_hours_ago);
     }
 
+    #[track_caller]
     fn messages(&self) -> MutexGuard<VecDeque<Message>> {
         self.messages.lock().unwrap()
     }
@@ -77,11 +78,16 @@ impl DataBase {
     }
 
     pub fn latest_messages(&self, count: usize) -> Vec<Message> {
-        self.messages().iter().take(count).cloned().collect()
+        let messages = self.messages();
+        let range = (messages.len().saturating_sub(count))..;
+        messages.range(range).take(count).cloned().collect()
     }
 
     /// Returns `None` if there are no messages.
     pub fn latest_message_date(&self) -> Option<DateTime<Utc>> {
-        self.messages().back().map(|message| message.date)
+        let messages = self.messages();
+        let date = messages.back().map(|message| message.date);
+        drop(messages);
+        date
     }
 }

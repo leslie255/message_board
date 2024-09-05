@@ -70,7 +70,10 @@ pub mod routes {
     pub struct UnknownHttpMethod;
     impl Display for UnknownHttpMethod {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Trying to convert `HttpMethod::Unknown` to `hyper::Method`")
+            write!(
+                f,
+                "Trying to convert `HttpMethod::Unknown` to `hyper::Method`"
+            )
         }
     }
     impl std::error::Error for UnknownHttpMethod {
@@ -108,7 +111,7 @@ pub mod routes {
     pub const SEND_MESSAGE: (HttpMethod, &str) = (HttpMethod::Post, "/send_message");
     pub const FETCH_MESSAGES: (HttpMethod, &str) = (HttpMethod::Get, "/fetch_messages");
     pub const FETCH_LATEST_UPDATE_DATE: (HttpMethod, &str) =
-        (HttpMethod::Get, "/FETCH_LATEST_UPDATE_DATE");
+        (HttpMethod::Get, "/fetch_latest_update_date");
 }
 
 pub const EXPECTED_RESPONSE_TO_HELLO: &str = "HELLO, WORLD";
