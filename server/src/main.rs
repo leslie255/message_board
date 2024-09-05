@@ -12,7 +12,7 @@ use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Request, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use interface::routes::{self, HttpMethod};
 use interface::{
@@ -20,7 +20,7 @@ use interface::{
     FetchMessagesResponse, SendMessageForm, SendMessageResponse,
 };
 use tokio::net::TcpListener;
-use utils::{respond, respond_with_status, DynThreadSafeResult, Json, State};
+use utils::{respond_with_status, DynResult, IntoResponse, Json, State};
 
 mod database;
 mod utils;
@@ -31,7 +31,7 @@ struct ServerState {
 }
 
 #[tokio::main]
-async fn main() -> DynThreadSafeResult<()> {
+async fn main() -> DynResult<()> {
     // Set up logger.
     let _logger = Logger::try_with_str("info")
         .unwrap()
@@ -82,7 +82,7 @@ async fn handle_request(
     server_state: Arc<ServerState>,
     request: Request<Incoming>,
     remote_addr: SocketAddr,
-) -> DynThreadSafeResult<Response<Full<Bytes>>> {
+) -> DynResult<hyper::Response<Full<Bytes>>> {
     if request.version() != hyper::Version::HTTP_11 {
         respond_with_status(
             StatusCode::HTTP_VERSION_NOT_SUPPORTED,
@@ -110,38 +110,39 @@ async fn handle_request(
                 .handle_by(handlers::fetch_latest_update_date)
                 .await?
         }
-        (method, path) => respond_with_status(
-            StatusCode::NOT_FOUND,
-            format!("404 Not found: {method} {path}"),
-        ),
+        (method, path) => format!("404 Not found: {method} {path}")
+            .into_response()
+            .status(StatusCode::NOT_FOUND),
     };
-    Ok(response)
+    Ok(response.into_hyper_response())
 }
 
 mod handlers {
+
+    use utils::ToJson;
+
     use super::*;
 
-    pub async fn hello() -> DynThreadSafeResult<Response<Full<Bytes>>> {
-        Ok(respond("HELLO, WORLD"))
+    pub async fn hello() -> DynResult<impl IntoResponse> {
+        Ok("HELLO, WORLD")
     }
 
     pub async fn send_message(
         State(server_state): State<ServerState>,
         Json(form): Json<SendMessageForm>,
-    ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
+    ) -> DynResult<impl IntoResponse> {
         let message = Message {
             content: form.content.into(),
             date: Utc::now(),
         };
         server_state.database.add_message(message);
-        let response_json = serde_json::to_string(&SendMessageResponse::ok()).unwrap();
-        Ok(respond(response_json))
+        Ok(SendMessageResponse::ok().to_json())
     }
 
     pub async fn fetch_messages(
         State(server_state): State<ServerState>,
         Json(form): Json<FetchMessagesForm>,
-    ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
+    ) -> DynResult<impl IntoResponse> {
         let count = u32::min(form.max_count, 50);
         let messages: Vec<interface::Message> = server_state
             .database
@@ -158,27 +159,24 @@ mod handlers {
                 date: message.date,
             })
             .collect();
-        let response = FetchMessagesResponse {
-            messages: messages.into(),
-        };
-        let response_json = serde_json::to_string(&response).unwrap();
         log::info!(
-            "Responding fetch message request with {} messages",
-            response.messages.len(),
+            "Responding fetch messages request with {} messages",
+            messages.len()
         );
-        Ok(respond(response_json))
+        Ok(FetchMessagesResponse {
+            messages: messages.into(),
+        }
+        .to_json())
     }
 
     pub async fn fetch_latest_update_date(
         State(server_state): State<ServerState>,
         Json(_): Json<FetchLatestUpdateDateForm>,
-    ) -> DynThreadSafeResult<Response<Full<Bytes>>> {
+    ) -> DynResult<impl IntoResponse> {
         let latest_message_date = server_state.database.latest_message_date();
-        let response = FetchLatestUpdateDateResponse {
+        Ok(FetchLatestUpdateDateResponse {
             latest_update_date: latest_message_date,
-        };
-        let response_json = serde_json::to_string(&response).unwrap();
-        log::info!("Response: {response_json:?}",);
-        Ok(respond(response_json))
+        }
+        .to_json())
     }
 }
