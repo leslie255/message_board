@@ -6,9 +6,8 @@ use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, Method, Request, Response, Uri};
 use hyper_util::rt::TokioIo;
 use interface::{
-    routes::{self, HttpMethod},
-    FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
-    FetchMessagesResponse, Message, SendMessageForm, SendMessageResponse,
+    routes, FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
+    FetchMessagesResponse, HttpMethod, Message, SendMessageForm, SendMessageResponse,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::net::TcpStream;

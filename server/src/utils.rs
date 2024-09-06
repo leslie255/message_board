@@ -11,7 +11,7 @@ use std::{
 use bytes::{buf::Reader, Buf, Bytes};
 use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, header::HeaderValue, HeaderMap, Request, StatusCode, Version};
-use interface::routes::HttpMethod;
+use interface::HttpMethod;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio_tungstenite::tungstenite::http::Extensions;
 
@@ -71,14 +71,12 @@ impl<S: ServerState> UnextractedRequest<S> {
             path,
         }
     }
-    pub async fn handle_by<Marker, Handler, Output>(
-        &mut self,
-        f: Handler,
-    ) -> DynResult<Response>
+
+    pub async fn handle_by<Handler, Marker0, Marker1>(&mut self, f: Handler) -> DynResult<Response>
     where
-        Marker: Tuple,
-        Output: IntoResponse,
-        Handler: RequestHandlerFn<S, Marker, Output>,
+        Marker0: Tuple,
+        Marker1: IntoResponse,
+        Handler: RequestHandlerFn<S, Marker0, Marker1>,
     {
         f.handle(self).await.map(IntoResponse::into_response)
     }
@@ -86,9 +84,7 @@ impl<S: ServerState> UnextractedRequest<S> {
 
 /// Half ass emulation of Axum's extractors.
 pub trait Extractor<S: ServerState>: Sized {
-    fn extract(
-        request: &mut UnextractedRequest<S>,
-    ) -> impl Future<Output = DynResult<Self>>;
+    fn extract(request: &mut UnextractedRequest<S>) -> impl Future<Output = DynResult<Self>>;
 }
 
 /// Extractor for receiving the server state.
@@ -135,6 +131,14 @@ impl<S: ServerState> Extractor<S> for Uri {
     }
 }
 
+/// Extractor for receiving the HTTP request header.
+pub struct Headers(pub HeaderMap<HeaderValue>);
+impl<S: ServerState> Extractor<S> for Headers {
+    async fn extract(request: &mut UnextractedRequest<S>) -> DynResult<Self> {
+        Ok(Self(request.http_headers.clone()))
+    }
+}
+
 impl<T: DeserializeOwned, B: Buf> TryFrom<Reader<B>> for Json<T> {
     type Error = serde_json::Error;
     fn try_from(value: Reader<B>) -> Result<Self, Self::Error> {
@@ -144,16 +148,48 @@ impl<T: DeserializeOwned, B: Buf> TryFrom<Reader<B>> for Json<T> {
 
 #[derive(Debug, Default)]
 pub struct Response {
-    inner: hyper::Response<Vec<u8>>,
+    inner: hyper::Response<Full<Bytes>>,
 }
 
 impl Response {
+    pub fn into_hyper_response(self) -> hyper::Response<Full<Bytes>> {
+        self.inner
+    }
+
+    pub fn status_mut(&mut self) -> &mut StatusCode {
+        self.inner.status_mut()
+    }
+
+    pub fn headers_mut(&mut self) -> &mut HeaderMap<HeaderValue> {
+        self.inner.headers_mut()
+    }
+
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        self.inner.extensions_mut()
+    }
+
+    pub fn version_mut(&mut self) -> &mut Version {
+        self.inner.version_mut()
+    }
+
     pub fn status(mut self, new_status: StatusCode) -> Self {
-        *self.inner.status_mut() = new_status;
+        *self.status_mut() = new_status;
         self
     }
-    pub fn into_hyper_response(self) -> hyper::Response<Full<Bytes>> {
-        self.inner.map(|bytes| Full::new(bytes.into()))
+
+    pub fn headers(mut self, new_headers: HeaderMap<HeaderValue>) -> Self {
+        *self.headers_mut() = new_headers;
+        self
+    }
+
+    pub fn extensions(mut self, new_extensions: Extensions) -> Self {
+        *self.extensions_mut() = new_extensions;
+        self
+    }
+
+    pub fn version(mut self, new_version: Version) -> Self {
+        *self.version_mut() = new_version;
+        self
     }
 }
 
@@ -161,18 +197,26 @@ pub trait IntoResponse {
     fn into_response(self) -> Response;
 }
 
-impl IntoResponse for Vec<u8> {
+impl IntoResponse for hyper::Response<Full<Bytes>> {
     fn into_response(self) -> Response {
         Response {
-            inner: hyper::Response::new(self),
+            inner: self
         }
     }
 }
 
-impl IntoResponse for &[u8] {
+impl IntoResponse for Vec<u8> {
     fn into_response(self) -> Response {
         Response {
-            inner: hyper::Response::new(self.to_vec()),
+            inner: hyper::Response::new(Full::new(self.into())),
+        }
+    }
+}
+
+impl IntoResponse for &'static [u8] {
+    fn into_response(self) -> Response {
+        Response {
+            inner: hyper::Response::new(Full::new(self.into())),
         }
     }
 }
@@ -183,7 +227,7 @@ impl IntoResponse for String {
     }
 }
 
-impl IntoResponse for &str {
+impl IntoResponse for &'static str {
     fn into_response(self) -> Response {
         self.as_bytes().into_response()
     }
@@ -198,6 +242,18 @@ impl IntoResponse for StatusCode {
 impl IntoResponse for Response {
     fn into_response(self) -> Response {
         self
+    }
+}
+
+impl IntoResponse for ! {
+    fn into_response(self) -> Response {
+        self
+    }
+}
+
+impl IntoResponse for () {
+    fn into_response(self) -> Response {
+        Vec::new().into_response()
     }
 }
 
@@ -234,11 +290,9 @@ pub trait ToJson: Serialize {
 
 impl<T: Serialize> ToJson for T {}
 
-pub trait RequestHandlerFn<S: ServerState, Args: Tuple, Output: IntoResponse> {
-    fn handle(
-        self,
-        request: &mut UnextractedRequest<S>,
-    ) -> impl Future<Output = DynResult<Output>>;
+pub trait RequestHandlerFn<S: ServerState, ArgMarker: Tuple, Output: IntoResponse> {
+    fn handle(self, request: &mut UnextractedRequest<S>)
+        -> impl Future<Output = DynResult<Output>>;
 }
 
 impl<S, F, Fut, Output> RequestHandlerFn<S, (), Output> for F

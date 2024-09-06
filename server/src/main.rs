@@ -1,4 +1,16 @@
-#![feature(decl_macro, tuple_trait)]
+#![feature(decl_macro, tuple_trait, never_type)]
+
+/// Emulates a data base, will swap out with a real one later.
+mod database;
+
+/// Axum-style HTTP request handling library.
+mod utils;
+
+/// Handling of HTTP requests.
+mod handlers;
+
+/// Manages everything Websocket.
+mod websocket;
 
 use std::env;
 use std::net::SocketAddr;
@@ -14,16 +26,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use interface::routes::{self, HttpMethod};
 use interface::{
-    FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
-    FetchMessagesResponse, SendMessageForm, SendMessageResponse,
+    routes, FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
+    FetchMessagesResponse, HttpMethod, SendMessageForm, SendMessageResponse,
 };
 use tokio::net::TcpListener;
-use utils::{respond_with_status, DynResult, IntoResponse, Json, State};
-
-mod database;
-mod utils;
+use utils::{respond_with_status, DynResult, IntoResponse, Json, State, ToJson};
 
 #[derive(Clone, Default)]
 struct ServerState {
@@ -61,8 +69,8 @@ async fn main() -> DynResult<()> {
     let server_state = Arc::new(ServerState::default());
 
     loop {
-        let (tcp, remote_addr) = listener.accept().await?;
-        let io = TokioIo::new(tcp);
+        let (tcp_stream, remote_addr) = listener.accept().await?;
+        let io = TokioIo::new(tcp_stream);
         let server_state = server_state.clone();
         let service =
             service_fn(move |request| handle_request(server_state.clone(), request, remote_addr));
@@ -90,18 +98,16 @@ async fn handle_request(
         );
         log::info!("Got request with unsupported HTTP version");
     }
-    if let Some(upgrade) = request.headers().get("upgrade") {
-        if upgrade == "websocket" {
-            log::error!("Client wants to upgrade to websocket");
-            respond_with_status(StatusCode::UPGRADE_REQUIRED, "WebSocket not supported yet");
-        }
+    if websocket::is_upgrade_request(&request) {
+        let response = websocket::upgrade(remote_addr, request).await?;
+        return Ok(response.into_response().into_hyper_response());
     }
     let method: HttpMethod = request.method().into();
     let path: String = request.uri().path().into();
     log::info!("Incoming request: {method} {path:?} from {remote_addr}");
     let mut request =
         utils::UnextractedRequest::new(server_state, remote_addr, method, path, request);
-    let response = match (request.method, request.path.as_str()) {
+    let response = match (request.method, request.path.trim_end_matches('/')) {
         routes::HELLO => request.handle_by(handlers::hello).await?,
         routes::SEND_MESSAGE => request.handle_by(handlers::send_message).await?,
         routes::FETCH_MESSAGES => request.handle_by(handlers::fetch_messages).await?,
@@ -115,68 +121,4 @@ async fn handle_request(
             .status(StatusCode::NOT_FOUND),
     };
     Ok(response.into_hyper_response())
-}
-
-mod handlers {
-
-    use utils::ToJson;
-
-    use super::*;
-
-    pub async fn hello() -> DynResult<impl IntoResponse> {
-        Ok("HELLO, WORLD")
-    }
-
-    pub async fn send_message(
-        State(server_state): State<ServerState>,
-        Json(form): Json<SendMessageForm>,
-    ) -> DynResult<impl IntoResponse> {
-        let message = Message {
-            content: form.content.into(),
-            date: Utc::now(),
-        };
-        server_state.database.add_message(message);
-        Ok(SendMessageResponse::ok().to_json())
-    }
-
-    pub async fn fetch_messages(
-        State(server_state): State<ServerState>,
-        Json(form): Json<FetchMessagesForm>,
-    ) -> DynResult<impl IntoResponse> {
-        let count = u32::min(form.max_count, 50);
-        let messages: Vec<interface::Message> = server_state
-            .database
-            .latest_messages(count as usize)
-            .into_iter()
-            .filter(|message| {
-                // FIXME: optimize this with the assumption of messages being ordered chronologically.
-                form.since
-                    .map(|since| message.date >= since)
-                    .unwrap_or(true)
-            })
-            .map(|message| interface::Message {
-                content: message.content.as_ref().to_owned().into(),
-                date: message.date,
-            })
-            .collect();
-        log::info!(
-            "Responding fetch messages request with {} messages",
-            messages.len()
-        );
-        Ok(FetchMessagesResponse {
-            messages: messages.into(),
-        }
-        .to_json())
-    }
-
-    pub async fn fetch_latest_update_date(
-        State(server_state): State<ServerState>,
-        Json(_): Json<FetchLatestUpdateDateForm>,
-    ) -> DynResult<impl IntoResponse> {
-        let latest_message_date = server_state.database.latest_message_date();
-        Ok(FetchLatestUpdateDateResponse {
-            latest_update_date: latest_message_date,
-        }
-        .to_json())
-    }
 }
