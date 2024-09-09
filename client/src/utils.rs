@@ -1,5 +1,12 @@
+#![allow(dead_code)]
+
 use std::fmt::Debug;
 use std::future::Future;
+
+pub type DynLocalError = Box<dyn std::error::Error>;
+pub type DynLocalResult<T> = Result<T, DynLocalError>;
+pub type DynError = Box<dyn std::error::Error + Send + Sync>;
+pub type DynResult<T> = Result<T, DynError>;
 
 /// Like `Result::unwrap`, but `log::error!(..)` on error instead of printing.
 pub trait PrettyUnwrap<T, E: Debug> {

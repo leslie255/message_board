@@ -9,6 +9,8 @@ mod utils;
 /// Handling of HTTP requests.
 mod handlers;
 
+mod migrate_to_axum;
+
 /// Manages everything Websocket.
 mod websocket;
 
@@ -31,7 +33,7 @@ use interface::{
     FetchMessagesResponse, HttpMethod, SendMessageForm, SendMessageResponse,
 };
 use tokio::net::TcpListener;
-use utils::{respond_with_status, DynResult, IntoResponse, Json, State, ToJson};
+use utils::{response, DynResult, IntoResponse, Json, State, ToJson};
 
 #[derive(Clone, Default)]
 struct ServerState {
@@ -40,6 +42,11 @@ struct ServerState {
 
 #[tokio::main]
 async fn main() -> DynResult<()> {
+    migrate_to_axum::main().await
+}
+
+#[expect(unused)]
+async fn old_main() -> DynResult<()> {
     // Set up logger.
     let _logger = Logger::try_with_str("info")
         .unwrap()
@@ -92,15 +99,14 @@ async fn handle_request(
     remote_addr: SocketAddr,
 ) -> DynResult<hyper::Response<Full<Bytes>>> {
     if request.version() != hyper::Version::HTTP_11 {
-        respond_with_status(
+        response(
             StatusCode::HTTP_VERSION_NOT_SUPPORTED,
             "not HTTP/1.1, abort connection",
         );
         log::info!("Got request with unsupported HTTP version");
     }
     if websocket::is_upgrade_request(&request) {
-        let response = websocket::upgrade(remote_addr, request).await?;
-        return Ok(response.into_response().into_hyper_response());
+        return websocket::handle(remote_addr, request).await;
     }
     let method: HttpMethod = request.method().into();
     let path: String = request.uri().path().into();

@@ -12,7 +12,7 @@ use interface::{
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::net::TcpStream;
 
-use crate::DynThreadSafeResult;
+use crate::utils::DynResult;
 
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -41,7 +41,7 @@ impl Client {
         &self,
         (method, path): (HttpMethod, &str),
         body: T,
-    ) -> DynThreadSafeResult<U> {
+    ) -> DynResult<U> {
         let uri: Uri = format!("{}{path}", &self.server_url).parse().unwrap();
         let method: hyper::Method = method.try_into()?;
         let response: U = request(uri, method, Some(body)).await?;
@@ -55,18 +55,18 @@ impl Client {
     }
 
     /// Helper function for `test_connection` until rust stablizes try blocks.
-    async fn test_connection_(&self) -> DynThreadSafeResult<bool> {
+    async fn test_connection_(&self) -> DynResult<bool> {
         // Unfortunately this is much of a rewrite of `Self::request` due to response to GET /hello
         // not being JSON.
         let (method, path) = routes::HELLO;
         let method: hyper::Method = method.try_into()?;
         let uri: Uri = format!("{}{path}", &self.server_url).parse().unwrap();
-        let response = request_raw(uri, method, None::<()>).await?;
+        let response = request_raw(uri, method, None::<()>, "text/plain").await?;
         let response_string = collect_response_to_string(response).await?;
         Ok(response_string.as_str() == interface::EXPECTED_RESPONSE_TO_HELLO)
     }
 
-    pub async fn send_message(&self, content: Box<str>) -> DynThreadSafeResult<()> {
+    pub async fn send_message(&self, content: Box<str>) -> DynResult<()> {
         let response: SendMessageResponse = self
             .request(routes::SEND_MESSAGE, SendMessageForm { content })
             .await?;
@@ -78,7 +78,7 @@ impl Client {
         &self,
         max_count: u32,
         since: Option<DateTime<Utc>>,
-    ) -> DynThreadSafeResult<Box<[Message]>> {
+    ) -> DynResult<Box<[Message]>> {
         let response: FetchMessagesResponse = self
             .request(
                 routes::FETCH_MESSAGES,
@@ -88,7 +88,7 @@ impl Client {
         Ok(response.messages)
     }
 
-    pub async fn fetch_latest_update_date(&self) -> DynThreadSafeResult<Option<DateTime<Utc>>> {
+    pub async fn fetch_latest_update_date(&self) -> DynResult<Option<DateTime<Utc>>> {
         let response: FetchLatestUpdateDateResponse = self
             .request(
                 routes::FETCH_LATEST_UPDATE_DATE,
@@ -103,7 +103,8 @@ async fn request_raw(
     url: Uri,
     method: Method,
     body: Option<impl Serialize>,
-) -> DynThreadSafeResult<Response<Incoming>> {
+    content_type: &'static str,
+) -> DynResult<Response<Incoming>> {
     let host = url.host().expect("uri has no host");
     let port = url.port_u16().unwrap_or(80);
     let addr = format!("{}:{}", host, port);
@@ -125,23 +126,18 @@ async fn request_raw(
         .method(method)
         .uri(path)
         .header(hyper::header::HOST, authority.as_str())
+        .header(hyper::header::CONTENT_TYPE, content_type)
         .body(Full::new(Bytes::from(body_string)))?;
     let response = sender.send_request(request).await?;
     Ok(response)
-}
-
-async fn collect_response_to_string(response: Response<Incoming>) -> DynThreadSafeResult<String> {
-    let response_body = response.collect().await?.to_bytes();
-    let response_string = String::from_utf8(response_body.to_vec())?;
-    Ok(response_string)
 }
 
 async fn request<T: DeserializeOwned>(
     url: Uri,
     method: Method,
     body: Option<impl Serialize>,
-) -> DynThreadSafeResult<T> {
-    let response_body = request_raw(url, method, body)
+) -> DynResult<T> {
+    let response_body = request_raw(url, method, body, "application/json")
         .await?
         .collect()
         .await?
@@ -149,14 +145,21 @@ async fn request<T: DeserializeOwned>(
     serde_json::from_reader(response_body.reader()).map_err(Into::into)
 }
 
-/// Like `request`, but also get the response as string.
+/// Like `request`, but get the response as string as well as the serialized object.
 async fn request_and_get_string<T: DeserializeOwned>(
     url: Uri,
     method: Method,
     body: impl Serialize,
-) -> DynThreadSafeResult<(T, String)> {
-    let response_body = request_raw(url, method, Some(body)).await?;
+) -> DynResult<(T, String)> {
+    let response_body = request_raw(url, method, Some(body), "application/json").await?;
     let response_string = collect_response_to_string(response_body).await?;
     let x = serde_json::from_str(&response_string)?;
     Ok((x, response_string))
+}
+
+async fn collect_response_to_string(response: Response<Incoming>) -> DynResult<String> {
+    let response_body = response.collect().await?.to_bytes();
+    let response_string = String::from_utf8(response_body.to_vec())?;
+    log::info!("[{}:{}] {response_string}", file!(), line!());
+    Ok(response_string)
 }

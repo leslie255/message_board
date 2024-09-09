@@ -23,14 +23,22 @@ pub type DynResult<T> = Result<T, DynError>;
 pub trait ServerState: Send + Sync {}
 impl<T: Send + Sync> ServerState for T {}
 
-pub fn respond(bytes: impl Into<Bytes>) -> hyper::Response<Full<Bytes>> {
-    respond_with_status(StatusCode::OK, bytes)
+fn infallible() -> std::convert::Infallible {
+    unreachable!();
 }
 
-pub fn respond_with_status(
-    status: StatusCode,
-    bytes: impl Into<Bytes>,
-) -> hyper::Response<Full<Bytes>> {
+/// `todo!` except it returns `Infallible` instead of `!`.
+#[allow(unused_macros)]
+pub macro todo_($($ts:tt)*) {{
+    #[allow(unreachable_code, clippy::diverging_sub_expression)]
+    {
+        let x: std::convert::Infallible = std::todo!($($ts)*);
+        x
+    }
+}}
+
+/// Make a simple response.
+pub fn response(status: StatusCode, bytes: impl Into<Bytes>) -> hyper::Response<Full<Bytes>> {
     hyper::Response::builder()
         .status(status)
         .body(Full::new(bytes.into()))
@@ -199,9 +207,7 @@ pub trait IntoResponse {
 
 impl IntoResponse for hyper::Response<Full<Bytes>> {
     fn into_response(self) -> Response {
-        Response {
-            inner: self
-        }
+        Response { inner: self }
     }
 }
 
