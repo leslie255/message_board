@@ -160,6 +160,5 @@ async fn request_and_get_string<T: DeserializeOwned>(
 async fn collect_response_to_string(response: Response<Incoming>) -> DynResult<String> {
     let response_body = response.collect().await?.to_bytes();
     let response_string = String::from_utf8(response_body.to_vec())?;
-    log::info!("[{}:{}] {response_string}", file!(), line!());
     Ok(response_string)
 }

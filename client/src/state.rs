@@ -4,8 +4,13 @@ use std::{
 };
 
 use interface::Message;
+use tokio::time;
 
-use crate::{api, utils::DynResult, DISPLAY_MESSAGE_COUNT};
+use crate::{
+    api,
+    utils::{DynResult, PrettyUnwrap},
+    DISPLAY_MESSAGE_COUNT,
+};
 
 #[derive(Debug)]
 pub struct AppState {
@@ -15,6 +20,10 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn api(&self) -> &api::Client {
+        &self.api
+    }
+
     pub fn with_server(server_url: String) -> Arc<Self> {
         Arc::new(Self {
             api: api::Client::with_server(server_url),
@@ -24,15 +33,11 @@ impl AppState {
     }
 
     pub fn lock_messages(&self) -> MutexGuard<VecDeque<Message>> {
-        self.messages.lock().unwrap()
+        self.messages.lock().pretty_unwrap()
     }
 
     pub fn lock_input(&self) -> MutexGuard<String> {
-        self.input.lock().unwrap()
-    }
-
-    pub fn api(&self) -> &api::Client {
-        &self.api
+        self.input.lock().pretty_unwrap()
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
@@ -70,6 +75,21 @@ impl AppState {
             std::mem::take(input).into()
         };
         self.api.send_message(new_message).await?;
+        self.fetch_new_messages_if_needed().await?;
         Ok(())
     }
+}
+
+pub fn setup_background_update(app_state: Arc<AppState>) {
+    let app_state = app_state.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            app_state
+                .fetch_new_messages_if_needed()
+                .await
+                .pretty_unwrap();
+        }
+    });
 }
