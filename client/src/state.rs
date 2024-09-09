@@ -8,6 +8,7 @@ use tokio::time;
 
 use crate::{
     api,
+    tui::UIState,
     utils::{DynResult, PrettyUnwrap},
     DISPLAY_MESSAGE_COUNT,
 };
@@ -16,7 +17,8 @@ use crate::{
 pub struct AppState {
     api: api::Client,
     messages: Mutex<VecDeque<Message>>,
-    input: Mutex<String>,
+    /// States related to UI elements.
+    ui_state: Mutex<UIState>,
 }
 
 impl AppState {
@@ -28,7 +30,7 @@ impl AppState {
         Arc::new(Self {
             api: api::Client::with_server(server_url),
             messages: Mutex::new(VecDeque::new()),
-            input: Mutex::new(String::new()),
+            ui_state: Mutex::new(UIState::default()),
         })
     }
 
@@ -36,8 +38,8 @@ impl AppState {
         self.messages.lock().pretty_unwrap()
     }
 
-    pub fn lock_input(&self) -> MutexGuard<String> {
-        self.input.lock().pretty_unwrap()
+    pub fn lock_ui_state(&self) -> MutexGuard<UIState> {
+        self.ui_state.lock().pretty_unwrap()
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
@@ -70,9 +72,8 @@ impl AppState {
 
     pub async fn send_message(&self) -> DynResult<()> {
         let new_message: Box<str> = {
-            let mut input = self.lock_input();
-            let input: &mut String = &mut input;
-            std::mem::take(input).into()
+            let mut ui_state = self.lock_ui_state();
+            std::mem::take(ui_state.input_mut()).into()
         };
         self.api.send_message(new_message).await?;
         self.fetch_new_messages_if_needed().await?;
