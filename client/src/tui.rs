@@ -1,12 +1,13 @@
 use std::{io::Stdout, sync::Arc};
 
+use chrono::{Timelike, Utc};
 use interface::Message;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout},
     style::{self, Color, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Terminal,
 };
 
@@ -17,6 +18,7 @@ use crate::{state::AppState, utils::DynResult};
 pub struct UIState {
     focused: FocusedElement,
     input: String,
+    is_in_help_page: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +95,16 @@ pub enum GlobalHandleKeyResult {
 
 pub async fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKeyResult {
     match (key.modifiers, key.code) {
+        (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
+            let mut ui_state = app_state.lock_ui_state();
+            ui_state.is_in_help_page = true;
+            GlobalHandleKeyResult::Continue
+        }
+        (KeyModifiers::NONE, KeyCode::Esc) => {
+            let mut ui_state = app_state.lock_ui_state();
+            ui_state.is_in_help_page = false;
+            GlobalHandleKeyResult::Continue
+        }
         (KeyModifiers::NONE, KeyCode::Tab) => {
             app_state.lock_ui_state().focus_next();
             GlobalHandleKeyResult::Continue
@@ -147,14 +159,36 @@ fn format_message(message: &Message) -> String {
 }
 
 fn draw(frame: &mut ratatui::Frame, app_state: &AppState) {
+    if app_state.lock_ui_state().is_in_help_page {
+        draw_help_page(frame)
+    } else {
+        draw_main_page(frame, app_state)
+    }
+}
+
+fn draw_help_page(frame: &mut ratatui::Frame) {
+    let text = help_page_text();
+    let area = frame.area();
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Help Page")
+                .title_style(title_style()),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_main_page(frame: &mut ratatui::Frame, app_state: &AppState) {
     let ui_state = app_state.lock_ui_state();
 
-    let size = frame.area();
+    let area = frame.area();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
-        .split(size);
+        .split(area);
 
     {
         // Messages list.
@@ -174,7 +208,7 @@ fn draw(frame: &mut ratatui::Frame, app_state: &AppState) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::new().fg(border_color))
-                .title(format!("Server: {}", app_state.api().server_url()))
+                .title(title_text(app_state))
                 .title_style(title_style()),
         );
         frame.render_widget(messages_list, chunks[0]);
@@ -199,6 +233,15 @@ fn draw(frame: &mut ratatui::Frame, app_state: &AppState) {
     }
 }
 
+fn title_text(app_state: &AppState) -> String {
+    let second = Utc::now().second() - app_state.start_date().second();
+    match second / 3 % 2 {
+        0 => "Welcome to Message Board, <Ctrl + H> for Help".into(),
+        1 => format!("Server: {}", app_state.api().server_url()),
+        _ => unreachable!(),
+    }
+}
+
 fn title_style() -> Style {
     Style::new().add_modifier(style::Modifier::BOLD)
 }
@@ -217,4 +260,8 @@ fn focused_border_color() -> Color {
 
 fn unfocused_border_color() -> Color {
     Color::White
+}
+
+fn help_page_text() -> &'static str {
+    include_str!("help_page_text.txt")
 }

@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use chrono::{DateTime, Utc};
 use interface::Message;
 use tokio::time;
 
@@ -19,6 +20,7 @@ pub struct AppState {
     messages: Mutex<VecDeque<Message>>,
     /// States related to UI elements.
     ui_state: Mutex<UIState>,
+    start_date: DateTime<Utc>,
 }
 
 impl AppState {
@@ -31,6 +33,7 @@ impl AppState {
             api: api::Client::with_server(server_url),
             messages: Mutex::new(VecDeque::new()),
             ui_state: Mutex::new(UIState::default()),
+            start_date: Utc::now(),
         })
     }
 
@@ -78,6 +81,10 @@ impl AppState {
         self.api.send_message(new_message).await?;
         self.fetch_new_messages_if_needed().await?;
         Ok(())
+    }
+
+    pub fn start_date(&self) -> DateTime<Utc> {
+        self.start_date
     }
 }
 
