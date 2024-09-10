@@ -13,7 +13,6 @@ mod websocket;
 use std::sync::Arc;
 
 use axum::{extract::State, response::IntoResponse, routing, Json, Router};
-use chrono::Utc;
 use database::DataBase;
 use interface::{
     FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
@@ -55,10 +54,7 @@ async fn send_message(
     State(server_state): State<ServerState>,
     Json(form): Json<SendMessageForm>,
 ) -> impl IntoResponse {
-    let message = Message {
-        content: form.content.into(),
-        date: Utc::now(),
-    };
+    let message = Message::new(form.content.into());
     server_state.database.add_message(message);
     Json(SendMessageResponse::ok())
 }
@@ -79,6 +75,7 @@ async fn fetch_messages(
                 .unwrap_or(true)
         })
         .map(|message| interface::Message {
+            id: message.id,
             content: message.content.as_ref().to_owned().into(),
             date: message.date,
         })

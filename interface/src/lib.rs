@@ -138,8 +138,12 @@ impl SendMessageResponse {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct MessageId(pub u64);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    pub id: MessageId,
     pub content: Box<str>,
     pub date: DateTime<Utc>,
 }

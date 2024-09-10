@@ -2,22 +2,33 @@
 
 use std::{
     collections::VecDeque,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use chrono::{DateTime, Duration, Utc};
+use interface::MessageId;
 
 #[derive(Debug, Clone)]
 pub struct Message {
+    pub id: MessageId,
     pub content: Arc<str>,
     pub date: DateTime<Utc>,
 }
 
 impl Message {
-    pub fn now(content: Arc<str>) -> Self {
+    pub fn new(content: Arc<str>) -> Self {
+        let date = Utc::now();
+        let id = {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            content.hash(&mut hasher);
+            date.hash(&mut hasher);
+            hasher.finish()
+        };
         Self {
+            id: MessageId(id),
             content,
-            date: Utc::now(),
+            date,
         }
     }
 }
