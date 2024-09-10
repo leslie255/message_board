@@ -1,6 +1,5 @@
 /// State of input fields.
 /// Manages cursor, selection, etc.
-
 use core::range::Range;
 
 fn len_of_codepoint_on(s: &str, index: usize) -> Option<usize> {
@@ -95,10 +94,7 @@ impl InputFieldState {
     pub fn cursor(&self) -> Cursor {
         match (self.caret, self.caret2) {
             (caret, None) => Cursor::Caret(caret),
-            (caret, Some(caret2)) => Cursor::Selection(Range {
-                start: usize::min(caret, caret2),
-                end: usize::max(caret, caret2),
-            }),
+            (caret, Some(caret2)) => Cursor::Selection(range(caret, caret2)),
         }
     }
 
@@ -123,30 +119,42 @@ impl InputFieldState {
 
     pub fn insert(&mut self, char: char) {
         if self.is_in_selection_mode() {
-            todo!()
+            self.delete_backward();
         }
         self.text.insert(self.caret, char);
         index_next(&self.text, &mut self.caret);
     }
 
     pub fn delete_backward(&mut self) {
-        if self.is_in_selection_mode() {
-            todo!()
-        }
-        index_prev(&self.text, &mut self.caret);
-        if self.caret_is_at_end() {
-            self.text.pop();
-        } else {
-            self.text.remove(self.caret);
+        match self.caret2 {
+            Some(caret2) => {
+                self.text.drain(range(self.caret, caret2));
+                self.caret2 = None;
+                self.caret = usize::min(self.caret, caret2);
+            }
+            None => {
+                index_prev(&self.text, &mut self.caret);
+                if self.caret_is_at_end() {
+                    self.text.pop();
+                } else {
+                    self.text.remove(self.caret);
+                }
+            }
         }
     }
 
     pub fn delete_forward(&mut self) {
-        if self.is_in_selection_mode() {
-            todo!()
-        }
-        if !self.caret_is_at_end() {
-            self.text.remove(self.caret);
+        match self.caret2 {
+            Some(caret2) => {
+                self.text.drain(range(self.caret, caret2));
+                self.caret2 = None;
+                self.caret = usize::min(self.caret, caret2);
+            }
+            None => {
+                if !self.caret_is_at_end() {
+                    self.text.remove(self.caret);
+                }
+            }
         }
     }
 
@@ -172,11 +180,46 @@ impl InputFieldState {
         self.caret = self.text.len();
     }
 
+    /// `<S-LEFT>` by convention.
     pub fn select_left(&mut self) {
-        todo!()
+        match &mut self.caret2 {
+            Some(caret2) => {
+                index_prev(&self.text, caret2);
+                if self.caret == *caret2 {
+                    self.caret2 = None;
+                }
+            }
+            caret2 @ None => {
+                let mut caret2_ = self.caret;
+                index_prev(&self.text, &mut caret2_);
+                *caret2 = Some(caret2_);
+            }
+        }
     }
 
+    /// `<S-RIGHT>` by convention.
     pub fn select_right(&mut self) {
-        todo!()
+        match &mut self.caret2 {
+            Some(caret2) => {
+                index_next(&self.text, caret2);
+                if self.caret == *caret2 {
+                    self.caret2 = None;
+                }
+            }
+            caret2 @ None => {
+                let mut caret2_ = self.caret;
+                index_next(&self.text, &mut caret2_);
+                *caret2 = Some(caret2_);
+            }
+        }
+    }
+}
+
+/// Form a range with two `usize`. Unlike `x..y`, this function orders `x` and `y` so the smaller
+/// one is `start` and larger one is `end`.
+fn range(x: usize, y: usize) -> Range<usize> {
+    Range {
+        start: usize::min(x, y),
+        end: usize::max(x, y),
     }
 }

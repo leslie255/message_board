@@ -72,7 +72,9 @@ pub fn setup_terminal() -> Terminal<CrosstermBackend<Stdout>> {
 }
 
 pub fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) {
+    use crossterm::event::DisableMouseCapture;
     terminal.show_cursor().unwrap();
+    crossterm::execute!(stdout(), DisableMouseCapture).unwrap();
     ratatui::restore()
 }
 
@@ -171,6 +173,12 @@ pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
         }
         (KeyModifiers::CONTROL, KeyCode::Right) | (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
             input_field_state_mut!().caret_right_end();
+        }
+        (KeyModifiers::SHIFT, KeyCode::Left) => {
+            input_field_state_mut!().select_left();
+        }
+        (KeyModifiers::SHIFT, KeyCode::Right) => {
+            input_field_state_mut!().select_right();
         }
         (KeyModifiers::NONE, KeyCode::Backspace) => input_field_state_mut!().delete_backward(),
         (KeyModifiers::NONE, KeyCode::Delete) | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
@@ -348,6 +356,10 @@ fn caret_bg() -> Style {
     Style::default().bg(caret_color())
 }
 
+fn selection_bg() -> Style {
+    Style::default().bg(Color::LightBlue)
+}
+
 fn input_field_placeholder(is_focused: bool) -> Paragraph<'static> {
     if is_focused {
         Paragraph::new(Line::from(vec![
@@ -367,19 +379,24 @@ fn input_field_paragraph(is_focused: bool, input_field_state: &InputFieldState) 
     if !is_focused {
         return Paragraph::new(text);
     }
-    let caret = match input_field_state.cursor() {
-        Cursor::Caret(caret) => caret,
-        _ => todo!(),
-    };
-    if input_field_state.caret_is_at_end() {
-        return Paragraph::new(Line::from(vec![
-            Span::raw(text),
-            Span::styled(".", caret_bg().fg(caret_color())),
-        ]));
+    match input_field_state.cursor() {
+        Cursor::Caret(caret) => {
+            if input_field_state.caret_is_at_end() {
+                return Paragraph::new(Line::from(vec![
+                    Span::raw(text),
+                    Span::styled(".", caret_bg().fg(caret_color())),
+                ]));
+            }
+            Paragraph::new(Line::from(vec![
+                Span::raw(&text[0..caret]),
+                Span::styled(&text[caret..caret + 1], caret_bg().fg(Color::Black)),
+                Span::raw(&text[caret + 1..]),
+            ]))
+        }
+        Cursor::Selection(range) => Paragraph::new(Line::from(vec![
+            Span::raw(&text[0..range.start]),
+            Span::styled(&text[range], selection_bg().fg(Color::Black)),
+            Span::raw(&text[range.end..]),
+        ])),
     }
-    Paragraph::new(Line::from(vec![
-        Span::raw(&text[0..caret]),
-        Span::styled(&text[caret..caret + 1], caret_bg().fg(Color::Black)),
-        Span::raw(&text[caret + 1..]),
-    ]))
 }
