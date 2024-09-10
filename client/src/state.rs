@@ -11,7 +11,6 @@ use crate::{
     api,
     tui::UIState,
     utils::{DynResult, PrettyUnwrap},
-    DISPLAY_MESSAGE_COUNT,
 };
 
 #[derive(Debug)]
@@ -59,7 +58,7 @@ impl AppState {
         if need_update {
             let new_messages = self
                 .api
-                .fetch_messages(DISPLAY_MESSAGE_COUNT as u32, local_latest)
+                .fetch_messages(100, local_latest)
                 .await?;
             let mut messages = self.lock_messages();
             let messages: &mut VecDeque<Message> = &mut messages;

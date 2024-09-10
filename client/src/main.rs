@@ -11,8 +11,6 @@ use state::AppState;
 use std::{env, sync::Arc};
 use utils::DynResult;
 
-pub const DISPLAY_MESSAGE_COUNT: usize = 20;
-
 #[tokio::main]
 async fn main() -> DynResult<()> {
     let _logger = Logger::try_with_str("info")?

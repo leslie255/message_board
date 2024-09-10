@@ -216,14 +216,11 @@ fn draw_help_page(frame: &mut ratatui::Frame) {
 
 fn draw_main_page(frame: &mut ratatui::Frame, app_state: &AppState) {
     let area = frame.area();
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
         .split(area);
-
     draw_messages_list(frame, app_state, chunks[0]);
-
     draw_input_field(frame, app_state, chunks[1]);
 }
 
@@ -233,7 +230,7 @@ fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, rect: Re
         .lock_messages()
         .iter()
         .rev()
-        .take(20)
+        .take(rect.height.saturating_sub(2) as usize)
         .rev()
         .map(|message| ListItem::new(format_message(message)))
         .collect();
