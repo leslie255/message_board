@@ -5,8 +5,6 @@ mod database;
 
 mod utils;
 
-mod migrate_to_axum;
-
 /// Manages everything Websocket.
 mod websocket;
 
