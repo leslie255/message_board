@@ -246,31 +246,25 @@ fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, rect: Re
 
 fn draw_input_field(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect) {
     let ui_state = app_state.lock_ui_state();
-    let border_style = match ui_state.focused {
-        FocusedElement::InputField => focused_border_style(),
-        _ => unfocused_border_style(),
+    let is_focused = matches!(ui_state.focused, FocusedElement::InputField);
+    let border_style = if is_focused {
+        focused_border_style()
+    } else {
+        unfocused_border_style()
     };
     let input_field_state = ui_state.input_field_state();
     let text = input_field_state.text();
-    let caret = match input_field_state.cursor() {
-        Cursor::Caret(caret) => caret,
-        _ => todo!(),
-    };
-    let text_with_cursor: Vec<Span> = if input_field_state.caret_is_at_end() {
-        vec![Span::raw(text), Span::styled("_", caret_text_style())]
+    let bottom_text = if is_focused && !text.is_empty() {
+        return_to_send()
     } else {
-        vec![
-            Span::raw(&text[0..caret]),
-            Span::styled(&text[caret..caret + 1], caret_text_style()),
-            Span::raw(&text[caret + 1..]),
-        ]
+        ""
     };
-    let input_field = Paragraph::new(Line::from(text_with_cursor))
+    let input_field = input_field_paragraph(is_focused, input_field_state)
         .block(
             Block::default()
                 .borders(Borders::all())
                 .border_style(border_style)
-                .title_bottom(return_to_send()),
+                .title_bottom(bottom_text),
         )
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(input_field, rect);
@@ -281,7 +275,7 @@ fn title_text(app_state: &AppState) -> String {
         .second()
         .wrapping_sub(app_state.start_date().second());
     match second / 3 % 2 {
-        0 => "Welcome to Message Board, <Ctrl + H> for Help".into(),
+        0 => "<Ctrl + H> for Help".into(),
         1 => format!("Server: {}", app_state.api().server_url()),
         _ => unreachable!(),
     }
@@ -311,6 +305,46 @@ fn help_page_text() -> &'static str {
     include_str!("help_page_text.txt")
 }
 
-fn caret_text_style() -> Style {
-    Style::default().bg(Color::White).fg(Color::Black)
+fn caret_color() -> Color {
+    Color::White
+}
+
+fn caret_bg() -> Style {
+    Style::default().bg(caret_color())
+}
+
+fn input_field_placeholder(is_focused: bool) -> Paragraph<'static> {
+    if is_focused {
+        Paragraph::new(Line::from(vec![
+            Span::styled("S", caret_bg().fg(Color::DarkGray)),
+            Span::styled("end a message...", Style::new().fg(Color::DarkGray)),
+        ]))
+    } else {
+        Paragraph::new("Send a message...").style(Style::new().fg(Color::DarkGray))
+    }
+}
+
+fn input_field_paragraph(is_focused: bool, input_field_state: &InputFieldState) -> Paragraph {
+    let text = input_field_state.text();
+    if text.is_empty() {
+        return input_field_placeholder(is_focused);
+    }
+    if !is_focused {
+        return Paragraph::new(text);
+    }
+    let caret = match input_field_state.cursor() {
+        Cursor::Caret(caret) => caret,
+        _ => todo!(),
+    };
+    if input_field_state.caret_is_at_end() {
+        return Paragraph::new(Line::from(vec![
+            Span::raw(text),
+            Span::styled(".", caret_bg().fg(caret_color())),
+        ]));
+    }
+    Paragraph::new(Line::from(vec![
+        Span::raw(&text[0..caret]),
+        Span::styled(&text[caret..caret + 1], caret_bg().fg(Color::Black)),
+        Span::raw(&text[caret + 1..]),
+    ]))
 }

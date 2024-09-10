@@ -1,15 +1,21 @@
 #![feature(iter_collect_into, new_range_api, decl_macro)]
 
 mod api;
+mod input_field;
 mod state;
 mod tui;
 mod utils;
-mod input_field;
 
 use flexi_logger::{FileSpec, Logger, WriteMode};
 use state::AppState;
 use std::{env, sync::Arc};
 use utils::DynResult;
+
+const DEFAULT_SERVER_URL: &str = if cfg!(debug_assertions) {
+    "http://127.0.0.1:3000"
+} else {
+    "http://64.176.51.97:3000"
+};
 
 #[tokio::main]
 async fn main() -> DynResult<()> {
@@ -18,7 +24,7 @@ async fn main() -> DynResult<()> {
         .write_mode(WriteMode::BufferAndFlush)
         .start()?;
 
-    let server_url = env::args().nth(1).unwrap_or("http://127.0.0.1:3000".into());
+    let server_url = env::args().nth(1).unwrap_or(DEFAULT_SERVER_URL.into());
     let app_state = AppState::with_server(server_url);
 
     app_state.fetch_new_messages_if_needed().await?;
