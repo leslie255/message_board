@@ -61,7 +61,7 @@ async fn fetch_messages(
     State(server_state): State<ServerState>,
     Json(form): Json<FetchMessagesForm>,
 ) -> impl IntoResponse {
-    let count = u32::min(form.max_count, 50);
+    let count = u32::min(form.max_count, 100);
     let messages: Vec<interface::Message> = server_state
         .database
         .latest_messages(count as usize)
