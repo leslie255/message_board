@@ -97,13 +97,6 @@ pub async fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHan
             app_state.lock_ui_state().focus_next();
             GlobalHandleKeyResult::Continue
         }
-        (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-            app_state
-                .fetch_new_messages_if_needed()
-                .await
-                .unwrap_or_else(|e| log::error!("Error fetching messages: {e}"));
-            GlobalHandleKeyResult::Continue
-        }
         (KeyModifiers::CONTROL, KeyCode::Char('q')) => GlobalHandleKeyResult::Break,
         _ => GlobalHandleKeyResult::Pass,
     }
@@ -113,6 +106,11 @@ pub async fn input_field_handle_key(app_state: &AppState, key: KeyEvent) {
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char(char)) => {
             app_state.lock_ui_state().input_mut().push(char);
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char(char)) => {
+            // FIXME: Respect more advanced keyboard layout (such as those with AltGr).
+            let mut ui_state = app_state.lock_ui_state();
+            char.to_uppercase().collect_into(ui_state.input_mut());
         }
         (KeyModifiers::NONE, KeyCode::Backspace) => {
             app_state.lock_ui_state().input_mut().pop();
@@ -127,8 +125,18 @@ pub async fn input_field_handle_key(app_state: &AppState, key: KeyEvent) {
     }
 }
 
-#[expect(unused_variables)]
-pub async fn message_list_handle_key(app_state: &AppState, key: KeyEvent) {}
+pub async fn message_list_handle_key(app_state: &AppState, key: KeyEvent) {
+    #[allow(clippy::single_match)] // stfu clippy
+    match (key.modifiers, key.code) {
+        (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+            app_state
+                .fetch_new_messages_if_needed()
+                .await
+                .unwrap_or_else(|e| log::error!("Error fetching messages: {e}"));
+        }
+        _ => (),
+    }
+}
 
 fn format_message(message: &Message) -> String {
     format!(
