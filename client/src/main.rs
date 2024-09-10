@@ -1,9 +1,10 @@
-#![feature(iter_collect_into)]
+#![feature(iter_collect_into, new_range_api)]
 
 mod api;
 mod state;
 mod tui;
 mod utils;
+mod input_field;
 
 use flexi_logger::{FileSpec, Logger, WriteMode};
 use state::AppState;

@@ -76,7 +76,7 @@ impl AppState {
     pub async fn send_message(&self) -> DynResult<()> {
         let new_message: Box<str> = {
             let mut ui_state = self.lock_ui_state();
-            std::mem::take(ui_state.input_mut()).into()
+            ui_state.input_field_state_mut().take_text().into()
         };
         self.api.send_message(new_message).await?;
         self.fetch_new_messages_if_needed().await?;

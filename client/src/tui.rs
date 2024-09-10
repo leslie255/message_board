@@ -8,19 +8,24 @@ use ratatui::{
         self,
         event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     },
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{self, Color, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Terminal,
 };
 
-use crate::{state::AppState, utils::DynResult};
+use crate::{
+    input_field::{Cursor, InputFieldState},
+    state::AppState,
+    utils::DynResult,
+};
 
 /// State of UI elements.
 #[derive(Debug, Clone, Default)]
 pub struct UIState {
     focused: FocusedElement,
-    input: String,
+    input_field_state: InputFieldState,
     is_in_help_page: bool,
 }
 
@@ -44,12 +49,12 @@ impl UIState {
         };
     }
 
-    pub fn input(&self) -> &str {
-        &self.input
+    pub fn input_field_state(&self) -> &InputFieldState {
+        &self.input_field_state
     }
 
-    pub fn input_mut(&mut self) -> &mut String {
-        &mut self.input
+    pub fn input_field_state_mut(&mut self) -> &mut InputFieldState {
+        &mut self.input_field_state
     }
 }
 
@@ -120,15 +125,35 @@ pub fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKey
 pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char(char)) => {
-            app_state.lock_ui_state().input_mut().push(char);
+            app_state
+                .lock_ui_state()
+                .input_field_state_mut()
+                .insert(char);
+        }
+        (KeyModifiers::NONE, KeyCode::Left) => {
+            app_state
+                .lock_ui_state()
+                .input_field_state_mut()
+                .caret_left();
+        }
+        (KeyModifiers::NONE, KeyCode::Right) => {
+            app_state
+                .lock_ui_state()
+                .input_field_state_mut()
+                .caret_right();
         }
         (KeyModifiers::SHIFT, KeyCode::Char(char)) => {
             // FIXME: Respect more advanced keyboard layout (such as those with AltGr).
             let mut ui_state = app_state.lock_ui_state();
-            char.to_uppercase().collect_into(ui_state.input_mut());
+            for char in char.to_uppercase() {
+                ui_state.input_field_state_mut().insert(char);
+            }
         }
         (KeyModifiers::NONE, KeyCode::Backspace) => {
-            app_state.lock_ui_state().input_mut().pop();
+            app_state
+                .lock_ui_state()
+                .input_field_state_mut()
+                .delete_backward();
         }
         (KeyModifiers::NONE, KeyCode::Enter) => {
             let app_state = Arc::clone(app_state);
@@ -190,8 +215,6 @@ fn draw_help_page(frame: &mut ratatui::Frame) {
 }
 
 fn draw_main_page(frame: &mut ratatui::Frame, app_state: &AppState) {
-    let ui_state = app_state.lock_ui_state();
-
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -199,51 +222,71 @@ fn draw_main_page(frame: &mut ratatui::Frame, app_state: &AppState) {
         .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
         .split(area);
 
-    {
-        // Messages list.
-        let messages: Vec<ListItem> = app_state
-            .lock_messages()
-            .iter()
-            .rev()
-            .take(20)
-            .rev()
-            .map(|message| ListItem::new(format_message(message)))
-            .collect();
-        let border_color = match ui_state.focused {
-            FocusedElement::MessageList => focused_border_color(),
-            _ => unfocused_border_color(),
-        };
-        let messages_list = List::new(messages).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::new().fg(border_color))
-                .title(title_text(app_state))
-                .title_style(title_style()),
-        );
-        frame.render_widget(messages_list, chunks[0]);
-    }
+    draw_messages_list(frame, app_state, chunks[0]);
 
-    {
-        // Input field.
-        let text = ui_state.input.clone();
-        let border_color = match ui_state.focused {
-            FocusedElement::InputField => focused_border_color(),
-            _ => unfocused_border_color(),
-        };
-        let input_field = Paragraph::new(text)
-            .block(
-                Block::default()
-                    .borders(Borders::all())
-                    .border_style(Style::new().fg(border_color))
-                    .title_bottom(return_to_send()),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        frame.render_widget(input_field, chunks[1]);
-    }
+    draw_input_field(frame, app_state, chunks[1]);
+}
+
+fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect) {
+    let ui_state = app_state.lock_ui_state();
+    let messages: Vec<ListItem> = app_state
+        .lock_messages()
+        .iter()
+        .rev()
+        .take(20)
+        .rev()
+        .map(|message| ListItem::new(format_message(message)))
+        .collect();
+    let border_style = match ui_state.focused {
+        FocusedElement::MessageList => focused_border_style(),
+        _ => unfocused_border_style(),
+    };
+    let messages_list = List::new(messages).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title_text(app_state))
+            .title_style(title_style()),
+    );
+    frame.render_widget(messages_list, rect);
+}
+
+fn draw_input_field(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect) {
+    let ui_state = app_state.lock_ui_state();
+    let border_style = match ui_state.focused {
+        FocusedElement::InputField => focused_border_style(),
+        _ => unfocused_border_style(),
+    };
+    let input_field_state = ui_state.input_field_state();
+    let text = input_field_state.text();
+    let caret = match input_field_state.cursor() {
+        Cursor::Caret(caret) => caret,
+        _ => todo!(),
+    };
+    let text_with_cursor: Vec<Span> = if input_field_state.caret_is_at_end() {
+        vec![Span::raw(text), Span::styled("_", caret_text_style())]
+    } else {
+        vec![
+            Span::raw(&text[0..caret]),
+            Span::styled(&text[caret..caret + 1], caret_text_style()),
+            Span::raw(&text[caret + 1..]),
+        ]
+    };
+    let input_field = Paragraph::new(Line::from(text_with_cursor))
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(border_style)
+                .title_bottom(return_to_send()),
+        )
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(input_field, rect);
 }
 
 fn title_text(app_state: &AppState) -> String {
-    let second = Utc::now().second() - app_state.start_date().second();
+    let second = Utc::now()
+        .second()
+        .wrapping_sub(app_state.start_date().second());
     match second / 3 % 2 {
         0 => "Welcome to Message Board, <Ctrl + H> for Help".into(),
         1 => format!("Server: {}", app_state.api().server_url()),
@@ -263,14 +306,18 @@ fn return_to_send() -> &'static str {
     }
 }
 
-fn focused_border_color() -> Color {
-    Color::Yellow
+fn focused_border_style() -> Style {
+    Style::new().fg(Color::Yellow)
 }
 
-fn unfocused_border_color() -> Color {
-    Color::White
+fn unfocused_border_style() -> Style {
+    Style::new().fg(Color::White)
 }
 
 fn help_page_text() -> &'static str {
     include_str!("help_page_text.txt")
+}
+
+fn caret_text_style() -> Style {
+    Style::default().bg(Color::White).fg(Color::Black)
 }
