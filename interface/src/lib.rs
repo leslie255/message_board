@@ -138,8 +138,16 @@ impl SendMessageResponse {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+/// `MessageId`s are made from hashing, they're discrete and their `Ord` implementation doesn't
+/// mean anything.
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MessageId(pub u64);
+
+impl Debug for MessageId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "message{:016X}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
