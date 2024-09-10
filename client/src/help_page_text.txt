@@ -3,5 +3,9 @@
 <ESC>       to exit this page
 
 <TAB>       to cycle focus between elements (yellow bordered element is the one in focus)
+
+When focused on input field at the bottom:
 <ENTER>     to send a message, when focused on the input field at the bottom (note you can't send a blank message)
+
+When focused on the list of messages:
 <CTRL + R>  to force refresh, when focused on the message list (you shouldn't need it)

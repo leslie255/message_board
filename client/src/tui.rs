@@ -4,7 +4,10 @@ use chrono::{Timelike, Utc};
 use interface::Message;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    crossterm::{
+        self,
+        event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    },
     layout::{Constraint, Direction, Layout},
     style::{self, Color, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
@@ -58,7 +61,7 @@ pub fn restore_terminal() {
     ratatui::restore()
 }
 
-pub async fn event_loop<B: Backend>(
+pub fn event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app_state: Arc<AppState>,
 ) -> DynResult<()> {
@@ -72,15 +75,15 @@ pub async fn event_loop<B: Backend>(
         let Event::Key(key) = event::read()? else {
             continue 'event_loop;
         };
-        match global_handle_key(&app_state, key).await {
+        match global_handle_key(&app_state, key) {
             GlobalHandleKeyResult::Continue => continue 'event_loop,
             GlobalHandleKeyResult::Break => break 'event_loop Ok(()),
             GlobalHandleKeyResult::Pass => (),
         }
         let focused_element = app_state.lock_ui_state().focused;
         match focused_element {
-            FocusedElement::InputField => input_field_handle_key(&app_state, key).await,
-            FocusedElement::MessageList => message_list_handle_key(&app_state, key).await,
+            FocusedElement::InputField => input_field_handle_key(&app_state, key),
+            FocusedElement::MessageList => message_list_handle_key(&app_state, key),
         }
     }
 }
@@ -93,7 +96,7 @@ pub enum GlobalHandleKeyResult {
     Pass,
 }
 
-pub async fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKeyResult {
+pub fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKeyResult {
     match (key.modifiers, key.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
             let mut ui_state = app_state.lock_ui_state();
@@ -114,7 +117,7 @@ pub async fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHan
     }
 }
 
-pub async fn input_field_handle_key(app_state: &AppState, key: KeyEvent) {
+pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char(char)) => {
             app_state.lock_ui_state().input_mut().push(char);
@@ -128,23 +131,29 @@ pub async fn input_field_handle_key(app_state: &AppState, key: KeyEvent) {
             app_state.lock_ui_state().input_mut().pop();
         }
         (KeyModifiers::NONE, KeyCode::Enter) => {
-            app_state
-                .send_message()
-                .await
-                .unwrap_or_else(|e| log::error!("Error sending message: {e}"));
+            let app_state = Arc::clone(app_state);
+            tokio::spawn(async move {
+                app_state
+                    .send_message()
+                    .await
+                    .unwrap_or_else(|e| log::error!("Error sending message: {e}"))
+            });
         }
         _ => (),
     }
 }
 
-pub async fn message_list_handle_key(app_state: &AppState, key: KeyEvent) {
+pub fn message_list_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
     #[allow(clippy::single_match)] // stfu clippy
     match (key.modifiers, key.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-            app_state
-                .fetch_new_messages_if_needed()
-                .await
-                .unwrap_or_else(|e| log::error!("Error fetching messages: {e}"));
+            let app_state = Arc::clone(app_state);
+            tokio::spawn(async move {
+                app_state
+                    .fetch_new_messages_if_needed()
+                    .await
+                    .unwrap_or_else(|e| log::error!("Error fetching messages: {e}"));
+            });
         }
         _ => (),
     }

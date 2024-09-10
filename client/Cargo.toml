@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+interface = { path = "../interface" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
@@ -14,11 +15,9 @@ reqwest = "0.12"
 tokio-tungstenite = "0.23"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
-interface = { path = "../interface" }
 cursive = "0.21"
 log = { version = "0.4", features = ["std", "serde"] }
 flexi_logger = "0.29"
 unicode-width = "0.1"
 ratatui = "0.28"
-crossterm = "0.28"
 

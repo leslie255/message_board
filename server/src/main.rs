@@ -3,37 +3,27 @@
 /// Emulates a data base, will swap out with a real one later.
 mod database;
 
-/// Axum-style HTTP request handling library.
 mod utils;
-
-/// Handling of HTTP requests.
-mod handlers;
 
 mod migrate_to_axum;
 
 /// Manages everything Websocket.
 mod websocket;
 
-use std::env;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
-use bytes::Bytes;
+use axum::{extract::State, response::IntoResponse, routing, Json, Router};
 use chrono::Utc;
-use database::{DataBase, Message};
-use flexi_logger::{Logger, WriteMode};
-use http_body_util::Full;
-use hyper::body::Incoming;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::{Request, StatusCode};
-use hyper_util::rt::{TokioIo, TokioTimer};
+use database::DataBase;
 use interface::{
-    routes, FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
-    FetchMessagesResponse, HttpMethod, SendMessageForm, SendMessageResponse,
+    FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
+    FetchMessagesResponse, SendMessageForm, SendMessageResponse,
 };
-use tokio::net::TcpListener;
-use utils::{response, DynResult, IntoResponse, Json, State, ToJson};
+
+use crate::{database::Message, utils::DynResult};
+
+#[allow(unused_imports)]
+use crate::utils::todo_;
 
 #[derive(Clone, Default)]
 struct ServerState {
@@ -41,90 +31,72 @@ struct ServerState {
 }
 
 #[tokio::main]
-async fn main() -> DynResult<()> {
-    migrate_to_axum::main().await
+pub async fn main() -> DynResult<()> {
+    let server_state = ServerState::default();
+    let app = Router::new()
+        .route("/hello", routing::get(hello))
+        .route("/send_message", routing::post(send_message))
+        .route("/fetch_messages", routing::get(fetch_messages))
+        .route(
+            "/fetch_latest_update_date",
+            routing::get(fetch_latest_update_date),
+        )
+        .with_state(server_state);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
-#[expect(unused)]
-async fn old_main() -> DynResult<()> {
-    // Set up logger.
-    let _logger = Logger::try_with_str("info")
-        .unwrap()
-        .write_mode(WriteMode::BufferAndFlush)
-        .start()
-        .unwrap();
+async fn hello() -> impl IntoResponse {
+    "HELLO, WORLD"
+}
 
-    // Set up TCP listener.
-    let port = {
-        let port_string = env::args().nth(1);
-        let port_string = port_string.as_deref().unwrap_or_else(|| {
-            log::warn!("Unspecified local address, using 3000");
-            "3000"
-        });
-        port_string.parse::<u16>().unwrap_or_else(|_| {
-            log::warn!("Invalid port number {port_string:?}, using 3000");
-            3000
+async fn send_message(
+    State(server_state): State<ServerState>,
+    Json(form): Json<SendMessageForm>,
+) -> impl IntoResponse {
+    let message = Message {
+        content: form.content.into(),
+        date: Utc::now(),
+    };
+    server_state.database.add_message(message);
+    Json(SendMessageResponse::ok())
+}
+
+async fn fetch_messages(
+    State(server_state): State<ServerState>,
+    Json(form): Json<FetchMessagesForm>,
+) -> impl IntoResponse {
+    let count = u32::min(form.max_count, 50);
+    let messages: Vec<interface::Message> = server_state
+        .database
+        .latest_messages(count as usize)
+        .into_iter()
+        .filter(|message| {
+            // FIXME: optimize this with the assumption of messages being ordered chronologically.
+            form.since
+                .map(|since| message.date >= since)
+                .unwrap_or(true)
         })
-    };
-    let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?;
-    if let Ok(local_addr) = listener.local_addr() {
-        log::info!("Server listening on {local_addr}");
-    } else {
-        log::info!("Server listening on unknown address");
-    }
-
-    let server_state = Arc::new(ServerState::default());
-
-    loop {
-        let (tcp_stream, remote_addr) = listener.accept().await?;
-        let io = TokioIo::new(tcp_stream);
-        let server_state = server_state.clone();
-        let service =
-            service_fn(move |request| handle_request(server_state.clone(), request, remote_addr));
-        tokio::task::spawn(async move {
-            let connection_result = http1::Builder::new()
-                .timer(TokioTimer::new())
-                .serve_connection(io, service)
-                .await;
-            if let Err(err) = connection_result {
-                println!("Error serving connection from address {remote_addr}: {err:?}");
-            }
-        });
-    }
+        .map(|message| interface::Message {
+            content: message.content.as_ref().to_owned().into(),
+            date: message.date,
+        })
+        .collect();
+    log::info!(
+        "Responding fetch messages request with {} messages",
+        messages.len()
+    );
+    Json(FetchMessagesResponse {
+        messages: messages.into(),
+    })
 }
 
-async fn handle_request(
-    server_state: Arc<ServerState>,
-    request: Request<Incoming>,
-    remote_addr: SocketAddr,
-) -> DynResult<hyper::Response<Full<Bytes>>> {
-    if request.version() != hyper::Version::HTTP_11 {
-        response(
-            StatusCode::HTTP_VERSION_NOT_SUPPORTED,
-            "not HTTP/1.1, abort connection",
-        );
-        log::info!("Got request with unsupported HTTP version");
-    }
-    if websocket::is_upgrade_request(&request) {
-        return websocket::handle(remote_addr, request).await;
-    }
-    let method: HttpMethod = request.method().into();
-    let path: String = request.uri().path().into();
-    log::info!("Incoming request: {method} {path:?} from {remote_addr}");
-    let mut request =
-        utils::UnextractedRequest::new(server_state, remote_addr, method, path, request);
-    let response = match (request.method, request.path.trim_end_matches('/')) {
-        routes::HELLO => request.handle_by(handlers::hello).await?,
-        routes::SEND_MESSAGE => request.handle_by(handlers::send_message).await?,
-        routes::FETCH_MESSAGES => request.handle_by(handlers::fetch_messages).await?,
-        routes::FETCH_LATEST_UPDATE_DATE => {
-            request
-                .handle_by(handlers::fetch_latest_update_date)
-                .await?
-        }
-        (method, path) => format!("404 Not found: {method} {path}")
-            .into_response()
-            .status(StatusCode::NOT_FOUND),
-    };
-    Ok(response.into_hyper_response())
+async fn fetch_latest_update_date(
+    State(server_state): State<ServerState>,
+    Json(_): Json<FetchLatestUpdateDateForm>,
+) -> impl IntoResponse {
+    Json(FetchLatestUpdateDateResponse {
+        latest_update_date: server_state.database.latest_message_date(),
+    })
 }
