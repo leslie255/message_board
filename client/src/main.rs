@@ -41,7 +41,7 @@ async fn main() -> DynResult<()> {
 
     let mut terminal = tui::setup_terminal();
     tui::event_loop(&mut terminal, Arc::clone(&app_state))?;
-    tui::restore_terminal();
+    tui::restore_terminal(terminal);
 
     Ok(())
 }

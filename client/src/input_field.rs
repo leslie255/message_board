@@ -1,6 +1,7 @@
-use core::range::Range;
+/// State of input fields.
+/// Manages cursor, selection, etc.
 
-/// Manages text editing of input fields.
+use core::range::Range;
 
 fn len_of_codepoint_on(s: &str, index: usize) -> Option<usize> {
     let byte = *s.as_bytes().get(index)?;
@@ -94,14 +95,15 @@ impl InputFieldState {
     pub fn cursor(&self) -> Cursor {
         match (self.caret, self.caret2) {
             (caret, None) => Cursor::Caret(caret),
-            (_, Some(_)) => todo!(),
+            (caret, Some(caret2)) => Cursor::Selection(Range {
+                start: usize::min(caret, caret2),
+                end: usize::max(caret, caret2),
+            }),
         }
     }
 
     pub fn clear(&mut self) {
-        self.text.clear();
-        self.caret = 0;
-        self.caret2 = None;
+        self.take_text();
     }
 
     pub fn take_text(&mut self) -> String {

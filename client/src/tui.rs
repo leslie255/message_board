@@ -1,4 +1,7 @@
-use std::{io::Stdout, sync::Arc};
+use std::{
+    io::{stdout, Stdout},
+    sync::Arc,
+};
 
 use chrono::{Timelike, Utc};
 use interface::Message;
@@ -6,9 +9,11 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     crossterm::{
         self,
-        event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+        event::{
+            self, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        },
     },
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{self, Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
@@ -26,6 +31,8 @@ use crate::{
 pub struct UIState {
     focused: FocusedElement,
     input_field_state: InputFieldState,
+    messages_list_area: Option<Rect>,
+    input_field_area: Option<Rect>,
     is_in_help_page: bool,
 }
 
@@ -59,10 +66,13 @@ impl UIState {
 }
 
 pub fn setup_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+    use crossterm::event::EnableMouseCapture;
+    crossterm::execute!(stdout(), EnableMouseCapture).unwrap();
     ratatui::init()
 }
 
-pub fn restore_terminal() {
+pub fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) {
+    terminal.show_cursor().unwrap();
     ratatui::restore()
 }
 
@@ -77,18 +87,21 @@ pub fn event_loop<B: Backend>(
         if !crossterm::event::poll(std::time::Duration::from_millis(100))? {
             continue 'event_loop;
         }
-        let Event::Key(key) = event::read()? else {
-            continue 'event_loop;
-        };
-        match global_handle_key(&app_state, key) {
-            GlobalHandleKeyResult::Continue => continue 'event_loop,
-            GlobalHandleKeyResult::Break => break 'event_loop Ok(()),
-            GlobalHandleKeyResult::Pass => (),
-        }
-        let focused_element = app_state.lock_ui_state().focused;
-        match focused_element {
-            FocusedElement::InputField => input_field_handle_key(&app_state, key),
-            FocusedElement::MessageList => message_list_handle_key(&app_state, key),
+        match event::read()? {
+            Event::Key(key_event) => {
+                match global_handle_key(&app_state, key_event) {
+                    GlobalHandleKeyResult::Continue => continue 'event_loop,
+                    GlobalHandleKeyResult::Break => break 'event_loop Ok(()),
+                    GlobalHandleKeyResult::Pass => (),
+                }
+                let focused_element = app_state.lock_ui_state().focused;
+                match focused_element {
+                    FocusedElement::InputField => input_field_handle_key(&app_state, key_event),
+                    FocusedElement::MessageList => message_list_handle_key(&app_state, key_event),
+                }
+            }
+            Event::Mouse(mouse_event) => global_handle_mouse(&app_state, mouse_event),
+            _ => continue 'event_loop,
         }
     }
 }
@@ -101,16 +114,14 @@ pub enum GlobalHandleKeyResult {
     Pass,
 }
 
-pub fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKeyResult {
-    match (key.modifiers, key.code) {
+pub fn global_handle_key(app_state: &AppState, key_event: KeyEvent) -> GlobalHandleKeyResult {
+    match (key_event.modifiers, key_event.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('h')) => {
-            let mut ui_state = app_state.lock_ui_state();
-            ui_state.is_in_help_page = true;
+            app_state.lock_ui_state().is_in_help_page = true;
             GlobalHandleKeyResult::Continue
         }
         (KeyModifiers::NONE, KeyCode::Esc) => {
-            let mut ui_state = app_state.lock_ui_state();
-            ui_state.is_in_help_page = false;
+            app_state.lock_ui_state().is_in_help_page = false;
             GlobalHandleKeyResult::Continue
         }
         (KeyModifiers::NONE, KeyCode::Tab) => {
@@ -119,6 +130,28 @@ pub fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKey
         }
         (KeyModifiers::CONTROL, KeyCode::Char('q')) => GlobalHandleKeyResult::Break,
         _ => GlobalHandleKeyResult::Pass,
+    }
+}
+
+pub fn global_handle_mouse(app_state: &AppState, mouse_event: MouseEvent) {
+    #[allow(clippy::single_match)]
+    match mouse_event.kind {
+        MouseEventKind::Up(MouseButton::Left) => {
+            let mut ui_state = app_state.lock_ui_state();
+            let position = Position::new(mouse_event.column, mouse_event.row);
+            if ui_state
+                .messages_list_area
+                .is_some_and(|area| area.contains(position))
+            {
+                ui_state.focused = FocusedElement::MessageList;
+            } else if ui_state
+                .input_field_area
+                .is_some_and(|area| area.contains(position))
+            {
+                ui_state.focused = FocusedElement::InputField;
+            }
+        }
+        _ => (),
     }
 }
 
@@ -220,13 +253,14 @@ fn draw_main_page(frame: &mut ratatui::Frame, app_state: &AppState) {
     draw_input_field(frame, app_state, chunks[1]);
 }
 
-fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect) {
-    let ui_state = app_state.lock_ui_state();
+fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, area: Rect) {
+    let mut ui_state = app_state.lock_ui_state();
+    ui_state.messages_list_area = Some(area);
     let messages: Vec<ListItem> = app_state
         .lock_messages()
         .iter()
         .rev()
-        .take(rect.height.saturating_sub(2) as usize)
+        .take(area.height.saturating_sub(2) as usize)
         .rev()
         .map(|message| ListItem::new(format_message(message)))
         .collect();
@@ -241,11 +275,12 @@ fn draw_messages_list(frame: &mut ratatui::Frame, app_state: &AppState, rect: Re
             .title(title_text(app_state))
             .title_style(title_style()),
     );
-    frame.render_widget(messages_list, rect);
+    frame.render_widget(messages_list, area);
 }
 
-fn draw_input_field(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect) {
-    let ui_state = app_state.lock_ui_state();
+fn draw_input_field(frame: &mut ratatui::Frame, app_state: &AppState, area: Rect) {
+    let mut ui_state = app_state.lock_ui_state();
+    ui_state.input_field_area = Some(area);
     let is_focused = matches!(ui_state.focused, FocusedElement::InputField);
     let border_style = if is_focused {
         focused_border_style()
@@ -267,7 +302,7 @@ fn draw_input_field(frame: &mut ratatui::Frame, app_state: &AppState, rect: Rect
                 .title_bottom(bottom_text),
         )
         .wrap(ratatui::widgets::Wrap { trim: true });
-    frame.render_widget(input_field, rect);
+    frame.render_widget(input_field, area);
 }
 
 fn title_text(app_state: &AppState) -> String {

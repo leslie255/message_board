@@ -78,7 +78,6 @@ impl AppState {
             ui_state.input_field_state_mut().take_text().into()
         };
         self.api.send_message(new_message).await?;
-        self.fetch_new_messages_if_needed().await?;
         Ok(())
     }
 
