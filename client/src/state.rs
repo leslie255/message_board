@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, MutexGuard},
 };
 
 use chrono::{DateTime, Utc};
@@ -20,6 +20,7 @@ pub struct AppState {
     /// States related to UI elements.
     ui_state: Mutex<UIState>,
     start_date: DateTime<Utc>,
+    is_fetching_message: AtomicBool,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
             messages: Mutex::new(VecDeque::new()),
             ui_state: Mutex::new(UIState::default()),
             start_date: Utc::now(),
+            is_fetching_message: false.into(),
         })
     }
 
@@ -45,6 +47,10 @@ impl AppState {
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
+        if self.is_fetching_message.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.is_fetching_message.store(true, Ordering::Release);
         let local_latest = self.lock_messages().back().map(|message| message.date);
         let remote_latest = self.api.fetch_latest_update_date().await?;
         let need_update = match (local_latest, remote_latest) {
@@ -69,6 +75,7 @@ impl AppState {
             }
             new_messages.into_vec().into_iter().collect_into(messages);
         }
+        self.is_fetching_message.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -78,6 +85,7 @@ impl AppState {
             ui_state.input_field_state_mut().take_text().into()
         };
         self.api.send_message(new_message).await?;
+        self.fetch_new_messages_if_needed().await?;
         Ok(())
     }
 
