@@ -131,9 +131,6 @@ impl InputFieldState {
         if self.is_in_selection_mode() {
             todo!()
         }
-        if self.text.is_empty() {
-            return;
-        }
         index_prev(&self.text, &mut self.caret);
         if self.caret_is_at_end() {
             self.text.pop();
@@ -143,7 +140,12 @@ impl InputFieldState {
     }
 
     pub fn delete_forward(&mut self) {
-        todo!()
+        if self.is_in_selection_mode() {
+            todo!()
+        }
+        if !self.caret_is_at_end() {
+            self.text.remove(self.caret);
+        }
     }
 
     pub fn caret_left(&mut self) {
@@ -152,6 +154,20 @@ impl InputFieldState {
 
     pub fn caret_right(&mut self) {
         index_next(&self.text, &mut self.caret);
+    }
+
+    pub fn caret_left_end(&mut self) {
+        if self.is_in_selection_mode() {
+            todo!()
+        }
+        self.caret = 0;
+    }
+
+    pub fn caret_right_end(&mut self) {
+        if self.is_in_selection_mode() {
+            todo!()
+        }
+        self.caret = self.text.len();
     }
 
     pub fn select_left(&mut self) {

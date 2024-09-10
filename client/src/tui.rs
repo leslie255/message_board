@@ -123,37 +123,33 @@ pub fn global_handle_key(app_state: &AppState, key: KeyEvent) -> GlobalHandleKey
 }
 
 pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
+    macro input_field_state_mut() {
+        app_state.lock_ui_state().input_field_state_mut()
+    }
     match (key.modifiers, key.code) {
-        (KeyModifiers::NONE, KeyCode::Char(char)) => {
-            app_state
-                .lock_ui_state()
-                .input_field_state_mut()
-                .insert(char);
+        (KeyModifiers::NONE, KeyCode::Left) | (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
+            input_field_state_mut!().caret_left()
         }
-        (KeyModifiers::NONE, KeyCode::Left) => {
-            app_state
-                .lock_ui_state()
-                .input_field_state_mut()
-                .caret_left();
+        (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::CONTROL, KeyCode::Char('f')) => {
+            input_field_state_mut!().caret_right()
         }
-        (KeyModifiers::NONE, KeyCode::Right) => {
-            app_state
-                .lock_ui_state()
-                .input_field_state_mut()
-                .caret_right();
+        (KeyModifiers::CONTROL, KeyCode::Left) | (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+            input_field_state_mut!().caret_left_end();
         }
+        (KeyModifiers::CONTROL, KeyCode::Right) | (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
+            input_field_state_mut!().caret_right_end();
+        }
+        (KeyModifiers::NONE, KeyCode::Backspace) => input_field_state_mut!().delete_backward(),
+        (KeyModifiers::NONE, KeyCode::Delete) | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+            input_field_state_mut!().delete_forward();
+        }
+        (KeyModifiers::NONE, KeyCode::Char(char)) => input_field_state_mut!().insert(char),
         (KeyModifiers::SHIFT, KeyCode::Char(char)) => {
             // FIXME: Respect more advanced keyboard layout (such as those with AltGr).
             let mut ui_state = app_state.lock_ui_state();
             for char in char.to_uppercase() {
                 ui_state.input_field_state_mut().insert(char);
             }
-        }
-        (KeyModifiers::NONE, KeyCode::Backspace) => {
-            app_state
-                .lock_ui_state()
-                .input_field_state_mut()
-                .delete_backward();
         }
         (KeyModifiers::NONE, KeyCode::Enter) => {
             let app_state = Arc::clone(app_state);

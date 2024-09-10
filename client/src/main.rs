@@ -1,4 +1,4 @@
-#![feature(iter_collect_into, new_range_api)]
+#![feature(iter_collect_into, new_range_api, decl_macro)]
 
 mod api;
 mod state;
