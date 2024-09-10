@@ -159,23 +159,31 @@ impl InputFieldState {
     }
 
     pub fn caret_left(&mut self) {
+        if let Some(caret2) = self.caret2 {
+            self.caret = caret2;
+            self.caret2 = None;
+        }
         index_prev(&self.text, &mut self.caret);
     }
 
     pub fn caret_right(&mut self) {
+        if let Some(caret2) = self.caret2 {
+            self.caret = caret2;
+            self.caret2 = None;
+        }
         index_next(&self.text, &mut self.caret);
     }
 
     pub fn caret_left_end(&mut self) {
-        if self.is_in_selection_mode() {
-            todo!()
+        if self.caret2.is_some() {
+            self.caret2 = None;
         }
         self.caret = 0;
     }
 
     pub fn caret_right_end(&mut self) {
-        if self.is_in_selection_mode() {
-            todo!()
+        if self.caret2.is_some() {
+            self.caret2 = None;
         }
         self.caret = self.text.len();
     }
