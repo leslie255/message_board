@@ -157,6 +157,19 @@ pub fn global_handle_mouse(app_state: &AppState, mouse_event: MouseEvent) {
     }
 }
 
+/// `unwrap_or` but `const`.
+const fn unwrap_or<T: Copy>(default: T, value: Option<T>) -> T {
+    match value {
+        Some(value) => value,
+        None => default,
+    }
+}
+
+pub const CONTROL_SHIFT: KeyModifiers = unwrap_or(
+    KeyModifiers::NONE,
+    KeyModifiers::from_bits(KeyModifiers::CONTROL.bits() | KeyModifiers::SHIFT.bits()),
+);
+
 pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
     macro input_field_state_mut() {
         app_state.lock_ui_state().input_field_state_mut()
@@ -168,10 +181,10 @@ pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Right) | (KeyModifiers::CONTROL, KeyCode::Char('f')) => {
             input_field_state_mut!().caret_right()
         }
-        (KeyModifiers::CONTROL, KeyCode::Left) | (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+        (KeyModifiers::CONTROL, KeyCode::Left | KeyCode::Char('a')) => {
             input_field_state_mut!().caret_left_end();
         }
-        (KeyModifiers::CONTROL, KeyCode::Right) | (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
+        (KeyModifiers::CONTROL, KeyCode::Right | KeyCode::Char('e')) => {
             input_field_state_mut!().caret_right_end();
         }
         (KeyModifiers::SHIFT, KeyCode::Left) => {
@@ -179,6 +192,12 @@ pub fn input_field_handle_key(app_state: &Arc<AppState>, key: KeyEvent) {
         }
         (KeyModifiers::SHIFT, KeyCode::Right) => {
             input_field_state_mut!().select_right();
+        }
+        (CONTROL_SHIFT, KeyCode::Left) => {
+            input_field_state_mut!().select_left_end();
+        }
+        (CONTROL_SHIFT, KeyCode::Right) => {
+            input_field_state_mut!().select_right_end();
         }
         (KeyModifiers::NONE, KeyCode::Backspace) => input_field_state_mut!().delete_backward(),
         (KeyModifiers::NONE, KeyCode::Delete) | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {

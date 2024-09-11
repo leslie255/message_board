@@ -221,6 +221,20 @@ impl InputFieldState {
             }
         }
     }
+
+    pub fn select_left_end(&mut self) {
+        self.caret2 = Some(0);
+        if self.caret == 0 {
+            self.caret2 = None;
+        }
+    }
+
+    pub fn select_right_end(&mut self) {
+        self.caret2 = Some(self.text.len());
+        if self.caret == self.text.len() {
+            self.caret2 = None;
+        }
+    }
 }
 
 /// Form a range with two `usize`. Unlike `x..y`, this function orders `x` and `y` so the smaller
