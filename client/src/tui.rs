@@ -1,9 +1,11 @@
 use std::{
+    fmt::{self, Debug, Display},
     io::{stdout, Stdout},
     sync::Arc,
 };
 
 use chrono::{Timelike, Utc};
+use copypasta::ClipboardContext;
 use interface::Message;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
@@ -26,14 +28,45 @@ use crate::{
     utils::DynResult,
 };
 
+#[derive(Clone, Copy)]
+pub struct DotDot;
+
+impl Debug for DotDot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "..")
+    }
+}
+
+impl Display for DotDot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "..")
+    }
+}
+
 /// State of UI elements.
-#[derive(Debug, Clone, Default)]
 pub struct UIState {
     focused: FocusedElement,
     input_field_state: InputFieldState,
     messages_list_area: Option<Rect>,
     input_field_area: Option<Rect>,
     is_in_help_page: bool,
+    /// `None` if clipboard_context can't be initialized.
+    clipboard_context: Option<ClipboardContext>,
+}
+
+impl Debug for UIState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("UIState")
+            .field("focused", &self.focused)
+            .field("input_field_state", &self.input_field_state)
+            .field("messages_list_area", &self.messages_list_area)
+            .field("input_field_area", &self.input_field_area)
+            .field(
+                "is_in_help_page",
+                &self.clipboard_context.as_ref().map(|_| DotDot),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +82,19 @@ impl Default for FocusedElement {
 }
 
 impl UIState {
+    pub fn new() -> Self {
+        Self {
+            focused: FocusedElement::default(),
+            input_field_state: InputFieldState::default(),
+            messages_list_area: None,
+            input_field_area: None,
+            is_in_help_page: false,
+            clipboard_context: ClipboardContext::new()
+                .inspect_err(|e| log::error!("Error initializing clipboard context: {e}"))
+                .ok(),
+        }
+    }
+
     pub fn focus_next(&mut self) {
         self.focused = match self.focused {
             FocusedElement::MessageList => FocusedElement::InputField,
@@ -62,6 +108,34 @@ impl UIState {
 
     pub fn input_field_state_mut(&mut self) -> &mut InputFieldState {
         &mut self.input_field_state
+    }
+
+    pub fn copy(&mut self) {
+        match self.clipboard_context.as_mut() {
+            Some(clipboard) => {
+                self.input_field_state
+                    .copy(clipboard)
+                    .unwrap_or_else(|e| log::error!("Error copying: {e}"));
+            }
+            None => {
+                log::error!(
+                    "Cannot copy because `ClipboardContext` could not be initialized earlier"
+                );
+            }
+        }
+    }
+
+    pub fn paste(&mut self) {
+        match self.clipboard_context.as_mut() {
+            Some(clipboard) => {
+                self.input_field_state.paste(clipboard);
+            }
+            None => {
+                log::error!(
+                    "Cannot paste because `ClipboardContext` could not be initialized earlier"
+                );
+            }
+        }
     }
 }
 
@@ -128,6 +202,14 @@ pub fn global_handle_key(app_state: &AppState, key_event: KeyEvent) -> GlobalHan
         }
         (KeyModifiers::NONE, KeyCode::Tab) => {
             app_state.lock_ui_state().focus_next();
+            GlobalHandleKeyResult::Continue
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+            app_state.lock_ui_state().copy();
+            GlobalHandleKeyResult::Continue
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('v')) => {
+            app_state.lock_ui_state().paste();
             GlobalHandleKeyResult::Continue
         }
         (KeyModifiers::CONTROL, KeyCode::Char('q')) => GlobalHandleKeyResult::Break,

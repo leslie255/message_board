@@ -2,6 +2,10 @@
 /// Manages cursor, selection, etc.
 use core::range::Range;
 
+use copypasta::{ClipboardContext, ClipboardProvider};
+
+use crate::utils::DynResult;
+
 fn len_of_codepoint_on(s: &str, index: usize) -> Option<usize> {
     let byte = *s.as_bytes().get(index)?;
     match byte {
@@ -121,8 +125,18 @@ impl InputFieldState {
         if self.is_in_selection_mode() {
             self.delete_backward();
         }
+        debug_assert!(self.caret2.is_none());
         self.text.insert(self.caret, char);
         index_next(&self.text, &mut self.caret);
+    }
+
+    pub fn batch_insert(&mut self, input: &str) {
+        if self.is_in_selection_mode() {
+            self.delete_backward();
+        }
+        debug_assert!(self.caret2.is_none());
+        self.text.insert_str(self.caret, input);
+        self.caret += input.len();
     }
 
     pub fn delete_backward(&mut self) {
@@ -234,6 +248,26 @@ impl InputFieldState {
         if self.caret == self.text.len() {
             self.caret2 = None;
         }
+    }
+
+    /// Copy the text to clipboard, if text is selected.
+    /// No-op if input field is not in selection mode (returns `Ok`).
+    /// Returns `Err` if error occured during copying using `copypasta`.
+    pub fn copy(&mut self, clipboard: &mut ClipboardContext) -> DynResult<()> {
+        let Cursor::Selection(selection_range) = self.cursor() else {
+            return Ok(());
+        };
+        let selected_text = self.text[selection_range].to_owned();
+        clipboard.set_contents(selected_text)
+    }
+
+    /// Paste text in clipboard to the input field.
+    /// No-op if nothing or non-string content is in the clipboard.
+    pub fn paste(&mut self, clipboard: &mut ClipboardContext) {
+        let Ok(clipboard_content) = clipboard.get_contents() else {
+            return;
+        };
+        self.batch_insert(&clipboard_content);
     }
 }
 

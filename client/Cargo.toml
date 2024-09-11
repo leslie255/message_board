@@ -19,4 +19,5 @@ log = { version = "0.4", features = ["std", "serde"] }
 flexi_logger = "0.29"
 unicode-width = "0.1"
 ratatui = "0.28"
+copypasta = "0.10"
 

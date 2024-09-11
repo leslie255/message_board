@@ -32,7 +32,7 @@ impl AppState {
         Arc::new(Self {
             api: api::Client::with_server(server_url),
             messages: Mutex::new(VecDeque::new()),
-            ui_state: Mutex::new(UIState::default()),
+            ui_state: Mutex::new(UIState::new()),
             start_date: Utc::now(),
             is_fetching_message: false.into(),
         })
@@ -47,10 +47,10 @@ impl AppState {
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
-        if self.is_fetching_message.load(Ordering::Acquire) {
+        if self.is_fetching_message() {
             return Ok(());
         }
-        self.is_fetching_message.store(true, Ordering::Release);
+        self.set_is_fetching_message();
         let local_latest = self.lock_messages().back().map(|message| message.date);
         let remote_latest = self.api.fetch_latest_update_date().await?;
         let need_update = match (local_latest, remote_latest) {
@@ -75,7 +75,7 @@ impl AppState {
             }
             new_messages.into_vec().into_iter().collect_into(messages);
         }
-        self.is_fetching_message.store(false, Ordering::Release);
+        self.unset_is_fetching_message();
         Ok(())
     }
 
@@ -91,6 +91,18 @@ impl AppState {
 
     pub fn start_date(&self) -> DateTime<Utc> {
         self.start_date
+    }
+
+    fn is_fetching_message(&self) -> bool {
+        self.is_fetching_message.load(Ordering::Acquire)
+    }
+
+    fn set_is_fetching_message(&self) {
+        self.is_fetching_message.store(true, Ordering::Release);
+    }
+
+    fn unset_is_fetching_message(&self) {
+        self.is_fetching_message.store(false, Ordering::Release);
     }
 }
 
