@@ -1,0 +1,3 @@
+[submodule "domtui"]
+	path = domtui
+	url = https://github.com/leslie255/domtui.git

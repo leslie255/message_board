@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use axum::{extract::State, response::IntoResponse, routing, Json, Router};
 use database::DataBase;
+use flexi_logger::{Logger, WriteMode};
 use interface::{
     FetchLatestUpdateDateForm, FetchLatestUpdateDateResponse, FetchMessagesForm,
     FetchMessagesResponse, SendMessageForm, SendMessageResponse,
@@ -29,6 +30,10 @@ struct ServerState {
 
 #[tokio::main]
 pub async fn main() -> DynResult<()> {
+    let _logger = Logger::try_with_str("info")?
+        .write_mode(WriteMode::BufferAndFlush)
+        .start()?;
+
     let server_state = ServerState::default();
     let app = Router::new()
         .route("/hello", routing::get(hello))
@@ -52,6 +57,7 @@ async fn send_message(
     State(server_state): State<ServerState>,
     Json(form): Json<SendMessageForm>,
 ) -> impl IntoResponse {
+    log::info!("/send_message request: {:?}", &form.content);
     let message = Message::new(form.content.into());
     server_state.database.add_message(message);
     Json(SendMessageResponse::ok())

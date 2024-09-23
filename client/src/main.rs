@@ -2,6 +2,7 @@
 
 mod api;
 mod input_field;
+mod newtui;
 mod state;
 mod tui;
 mod utils;
@@ -39,9 +40,9 @@ async fn main() -> DynResult<()> {
 
     state::setup_background_update(Arc::clone(&app_state));
 
-    let mut terminal = tui::setup_terminal();
-    tui::event_loop(&mut terminal, Arc::clone(&app_state))?;
-    tui::restore_terminal(terminal);
+    let mut terminal = domtui::setup_terminal();
+    newtui::event_loop(&mut terminal, Arc::clone(&app_state))?;
+    domtui::restore_terminal(terminal);
 
     Ok(())
 }
