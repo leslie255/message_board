@@ -8,10 +8,10 @@ use ratatui::{
     prelude::Rect,
     style::{
         Color::{self, *},
-        Style,
+        Modifier, Style,
     },
     text::Line,
-    widgets::{self, Block, Borders},
+    widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
 
@@ -49,83 +49,6 @@ impl MessageInputField {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MessagesList {
-    app_state: Arc<AppState>,
-    scroll: i16,
-}
-
-impl MessagesList {
-    pub fn new(app_state: Arc<AppState>) -> Self {
-        Self {
-            app_state,
-            scroll: Default::default(),
-        }
-    }
-}
-
-impl MutView for MessagesList {
-    fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
-        // Area inside the borders.
-        let area_inner = inner_area(area, 1);
-        let mut lines = Vec::with_capacity(area_inner.height as usize);
-        let messages = self.app_state.lock_messages();
-        let messages = messages.iter().rev().take(area_inner.height as usize).rev();
-        let mut prev_date: DateTime<Local> = DateTime::UNIX_EPOCH.into();
-        let mut extra_lines = 0i16;
-        for message in messages {
-            let message_date: DateTime<Local> = message.date.into();
-            if message_date.signed_duration_since(prev_date).num_seconds() >= 120 {
-                lines.push(Line::styled(
-                    format!("[{}]", message_date),
-                    Style::new().fg(DarkGray),
-                ));
-                extra_lines += 1;
-            }
-            prev_date = message_date;
-            lines.push(Line::styled(
-                message.content.as_ref(),
-                Style::new().fg(White),
-            ));
-        }
-        let border_color = if is_focused { LightYellow } else { White };
-        let mut scroll: i16 = self.scroll;
-        if lines.len() > area_inner.height as usize {
-            scroll = scroll.saturating_add(extra_lines);
-        }
-        let pargraph = widgets::Paragraph::new(lines.to_vec())
-            .block(borders(border_color).title("Welcome to Message_Board"))
-            .scroll((scroll.try_into().unwrap_or_default(), 0));
-        frame.render_widget(pargraph, area);
-    }
-
-    fn is_focusable(&self) -> bool {
-        true
-    }
-
-    fn on_key_event(&mut self, key_event: KeyEvent) {
-        if key_event.kind != KeyEventKind::Press {
-            return;
-        }
-
-        // TODO: limit scrolling.
-        match (key_event.modifiers, key_event.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => self.scroll -= 1,
-            (KeyModifiers::NONE, KeyCode::Down) => self.scroll += 1,
-            (_, _) => (),
-        }
-    }
-}
-
-const fn inner_area(outer_area: Rect, border_width: u16) -> Rect {
-    Rect {
-        x: outer_area.x + border_width,
-        y: outer_area.y + border_width,
-        width: outer_area.width - border_width * 2,
-        height: outer_area.height - border_width * 2,
-    }
-}
-
 impl MutView for MessageInputField {
     fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
         self.super_.render(frame, area, is_focused);
@@ -155,6 +78,90 @@ impl MutView for MessageInputField {
 
     fn preferred_size(&self) -> Option<Size> {
         Some(Size::new(u16::MAX, 3))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessagesList {
+    app_state: Arc<AppState>,
+    scroll: i16,
+}
+
+impl MessagesList {
+    pub fn new(app_state: Arc<AppState>) -> Self {
+        Self {
+            app_state,
+            scroll: Default::default(),
+        }
+    }
+}
+
+impl MutView for MessagesList {
+    fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        // Area inside the borders.
+        let area_inner = inner_area(area, 1);
+        let mut lines = Vec::with_capacity(area_inner.height as usize);
+        let messages = self.app_state.lock_messages();
+        let mut prev_date: DateTime<Local> = messages
+            .front()
+            .map(|m| m.date.into())
+            .unwrap_or(DateTime::UNIX_EPOCH.into());
+        for message in messages.iter() {
+            let message_date: DateTime<Local> = message.date.into();
+            if message_date.signed_duration_since(prev_date).num_seconds() >= 120 {
+                lines.push(Line::styled(
+                    message_date.format("[%Y-%m-%d %H:%M]").to_string(),
+                    Style::new().fg(DarkGray),
+                ));
+            }
+            prev_date = message_date;
+            lines.push(Line::styled(
+                message.content.as_ref(),
+                Style::new().fg(White),
+            ));
+        }
+        let extra_lines = (lines.len() - area_inner.height as usize) as i16;
+        let scroll = u16::try_from(self.scroll.saturating_add(extra_lines)).unwrap_or(0);
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .style(Style::new().fg(if is_focused { LightYellow } else { White }))
+            .title("Welcome to Message_Board")
+            .title_style(Style::new().add_modifier(Modifier::BOLD));
+        let pargraph = Paragraph::new(lines.to_vec())
+            .scroll((scroll, 0))
+            .block(block);
+        frame.render_widget(pargraph, area);
+    }
+
+    fn is_focusable(&self) -> bool {
+        true
+    }
+
+    fn on_key_event(&mut self, key_event: KeyEvent) {
+        if key_event.kind != KeyEventKind::Press {
+            return;
+        }
+
+        // TODO: limit scrolling.
+        use KeyCode::*;
+        match (key_event.modifiers, key_event.code) {
+            (KeyModifiers::NONE, Up) | (KeyModifiers::CONTROL, Char('p')) => {
+                self.scroll -= 1;
+            }
+            (KeyModifiers::NONE, Down) | (KeyModifiers::CONTROL, Char('n')) => {
+                self.scroll += 1;
+            }
+            (_, _) => (),
+        }
+    }
+}
+
+const fn inner_area(outer_area: Rect, border_width: u16) -> Rect {
+    Rect {
+        x: outer_area.x + border_width,
+        y: outer_area.y + border_width,
+        width: outer_area.width - border_width * 2,
+        height: outer_area.height - border_width * 2,
     }
 }
 

@@ -9,7 +9,6 @@ use tokio::time;
 
 use crate::{
     api,
-    tui::UIState,
     utils::{DynResult, PrettyUnwrap},
 };
 
@@ -17,8 +16,6 @@ use crate::{
 pub struct AppState {
     api: api::Client,
     messages: Mutex<VecDeque<Message>>,
-    /// States related to UI elements.
-    ui_state: Mutex<UIState>,
     start_date: DateTime<Utc>,
     is_fetching_message: AtomicBool,
 }
@@ -32,7 +29,6 @@ impl AppState {
         Arc::new(Self {
             api: api::Client::with_server(server_url),
             messages: Mutex::new(VecDeque::new()),
-            ui_state: Mutex::new(UIState::new()),
             start_date: Utc::now(),
             is_fetching_message: false.into(),
         })
@@ -40,10 +36,6 @@ impl AppState {
 
     pub fn lock_messages(&self) -> MutexGuard<VecDeque<Message>> {
         self.messages.lock().pretty_unwrap()
-    }
-
-    pub fn lock_ui_state(&self) -> MutexGuard<UIState> {
-        self.ui_state.lock().pretty_unwrap()
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
@@ -58,7 +50,7 @@ impl AppState {
             (None, None) => false,
             _ => true,
         };
-        log::info!(
+        log::debug!(
             "local: {local_latest:?}, remote: {remote_latest:?}, need_update: {need_update}"
         );
         if need_update {
@@ -76,16 +68,6 @@ impl AppState {
             new_messages.into_vec().into_iter().collect_into(messages);
         }
         self.unset_is_fetching_message();
-        Ok(())
-    }
-
-    pub async fn send_message(&self) -> DynResult<()> {
-        let new_message: Box<str> = {
-            let mut ui_state = self.lock_ui_state();
-            ui_state.input_field_state_mut().take_text().into()
-        };
-        self.api.send_message(new_message).await?;
-        self.fetch_new_messages_if_needed().await?;
         Ok(())
     }
 

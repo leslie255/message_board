@@ -4,7 +4,6 @@ mod api;
 mod input_field;
 mod newtui;
 mod state;
-mod tui;
 mod utils;
 
 use flexi_logger::{FileSpec, Logger, WriteMode};
@@ -28,8 +27,6 @@ async fn main() -> DynResult<()> {
     let server_url = env::args().nth(1).unwrap_or(DEFAULT_SERVER_URL.into());
     let app_state = AppState::with_server(server_url);
 
-    app_state.fetch_new_messages_if_needed().await?;
-
     println!("Saying hello with server");
     log::info!("Saying hello with server");
     if !app_state.api().test_connection().await {
@@ -37,6 +34,8 @@ async fn main() -> DynResult<()> {
         log::error!("Can't connect with server {}", app_state.api().server_url());
         std::process::exit(1);
     }
+
+    app_state.fetch_new_messages_if_needed().await?;
 
     state::setup_background_update(Arc::clone(&app_state));
 
