@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 use chrono::{DateTime, Utc};
@@ -9,6 +12,7 @@ use tokio::time;
 
 use crate::{
     api,
+    newtui::UIState,
     utils::{DynResult, PrettyUnwrap},
 };
 
@@ -17,6 +21,7 @@ pub struct AppState {
     api: api::Client,
     messages: Mutex<VecDeque<Message>>,
     start_date: DateTime<Utc>,
+    ui_state: Mutex<UIState>,
     is_fetching_message: AtomicBool,
 }
 
@@ -26,16 +31,27 @@ impl AppState {
     }
 
     pub fn with_server(server_url: String) -> Arc<Self> {
-        Arc::new(Self {
+        let self_ = Arc::new(Self {
             api: api::Client::with_server(server_url),
             messages: Mutex::new(VecDeque::new()),
             start_date: Utc::now(),
+            ui_state: Mutex::new(UIState::default()),
             is_fetching_message: false.into(),
-        })
+        });
+        self_
+            .ui_state
+            .lock()
+            .unwrap()
+            .set_app_state(Arc::downgrade(&self_));
+        self_
     }
 
     pub fn lock_messages(&self) -> MutexGuard<VecDeque<Message>> {
         self.messages.lock().pretty_unwrap()
+    }
+
+    pub fn lock_ui_state(&self) -> MutexGuard<UIState> {
+        self.ui_state.lock().pretty_unwrap()
     }
 
     pub async fn fetch_new_messages_if_needed(&self) -> DynResult<()> {
@@ -54,10 +70,7 @@ impl AppState {
             "local: {local_latest:?}, remote: {remote_latest:?}, need_update: {need_update}"
         );
         if need_update {
-            let new_messages = self
-                .api
-                .fetch_messages(100, local_latest)
-                .await?;
+            let new_messages = self.api.fetch_messages(100, local_latest).await?;
             let mut messages = self.lock_messages();
             let messages: &mut VecDeque<Message> = &mut messages;
             // To pervent latest message being repeated.

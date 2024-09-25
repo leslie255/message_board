@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 interface = { path = "../interface" }
-domtui = { git = "https://github.com/leslie255/domtui.git", tag = "v0.0.2" }
+domtui = { git = "https://github.com/leslie255/domtui.git", tag = "v0.0.3" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }

@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use chrono::{DateTime, Local};
-use domtui::views::{InputField, MutView, ScreenBuilder, Size, Stack};
+use domtui::views::{InputField, MutView, ScreenBuilder, Size, Stack, ViewCell};
 use ratatui::{
     backend::Backend,
-    crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     prelude::Rect,
     style::{
         Color::{self, *},
@@ -21,13 +21,69 @@ const INPUT_FIELD_TAG: &str = "input_field";
 const MESSAGES_LIST_TAG: &str = "messages_list";
 
 #[derive(Debug, Clone)]
+pub struct UIState {
+    app_state: Weak<AppState>,
+    current_screen: Screen,
+    main_screen: domtui::views::Screen<'static, Stack<(ViewCell<'static>, ViewCell<'static>)>>,
+}
+
+impl Default for UIState {
+    fn default() -> Self {
+        let mut main_screen = {
+            let mut builder = ScreenBuilder::new();
+            let root_view = Stack::vertical((
+                builder.tagged_view_cell(MESSAGES_LIST_TAG, MessagesList::new(Weak::new())),
+                builder.tagged_view_cell(INPUT_FIELD_TAG, MessageInputField::new(Weak::new())),
+            ));
+            builder.finish(root_view)
+        };
+        main_screen.focus_next();
+        Self {
+            app_state: Weak::default(),
+            current_screen: Screen::default(),
+            main_screen,
+        }
+    }
+}
+
+impl UIState {
+    /// This function may only be called by `AppState`.
+    pub fn messages_updated(&mut self) {
+        log::info!("todo");
+    }
+
+    pub fn set_app_state(&mut self, app_state: Weak<AppState>) {
+        self.app_state = app_state.clone();
+        unsafe {
+            self.main_screen
+                .inspect_view_with_tag_unchecked::<(), MessageInputField>(INPUT_FIELD_TAG, |v| {
+                    v.app_state = app_state.clone();
+                })
+                .unwrap();
+            self.main_screen
+                .inspect_view_with_tag_unchecked::<(), MessagesList>(MESSAGES_LIST_TAG, |v| {
+                    v.app_state = app_state.clone();
+                })
+                .unwrap();
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum Screen {
+    #[default]
+    MainScreen,
+    HelpScreen,
+}
+
+#[derive(Debug, Clone)]
 pub struct MessageInputField {
     super_: InputField<'static>,
-    app_state: Arc<AppState>,
+    app_state: Weak<AppState>,
 }
 
 impl MessageInputField {
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    pub fn new(app_state: Weak<AppState>) -> Self {
         Self {
             super_: InputField::default()
                 .placeholder("Send a message ...")
@@ -38,7 +94,7 @@ impl MessageInputField {
     }
 
     fn send_message(&mut self) {
-        let app_state = Arc::clone(&self.app_state);
+        let app_state = self.app_state.upgrade().unwrap();
         let message = self.super_.content_mut().take_text();
         tokio::spawn(async move {
             let send_result = app_state.api().send_message(message.into()).await;
@@ -83,12 +139,12 @@ impl MutView for MessageInputField {
 
 #[derive(Debug, Clone)]
 pub struct MessagesList {
-    app_state: Arc<AppState>,
+    app_state: Weak<AppState>,
     scroll: i16,
 }
 
 impl MessagesList {
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    pub fn new(app_state: Weak<AppState>) -> Self {
         Self {
             app_state,
             scroll: Default::default(),
@@ -100,8 +156,9 @@ impl MutView for MessagesList {
     fn render(&self, frame: &mut Frame, area: Rect, is_focused: bool) {
         // Area inside the borders.
         let area_inner = inner_area(area, 1);
-        let mut lines = Vec::with_capacity(area_inner.height as usize);
-        let messages = self.app_state.lock_messages();
+        let mut lines = Vec::new();
+        let app_state = self.app_state.upgrade().unwrap();
+        let messages = app_state.lock_messages();
         let mut prev_date: DateTime<Local> = messages
             .front()
             .map(|m| m.date.into())
@@ -120,7 +177,7 @@ impl MutView for MessagesList {
                 Style::new().fg(White),
             ));
         }
-        let extra_lines = (lines.len() - area_inner.height as usize) as i16;
+        let extra_lines = lines.len().saturating_sub(usize::from(area_inner.height)) as i16;
         let scroll = u16::try_from(self.scroll.saturating_add(extra_lines)).unwrap_or(0);
         let block = Block::new()
             .borders(Borders::ALL)
@@ -169,20 +226,62 @@ pub fn event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app_state: Arc<AppState>,
 ) -> DynResult<()> {
-    let mut screen = {
-        let mut builder = ScreenBuilder::new();
-        let root_view = Stack::vertical((
-            builder.tagged_view_cell(MESSAGES_LIST_TAG, MessagesList::new(app_state.clone())),
-            builder.tagged_view_cell(INPUT_FIELD_TAG, MessageInputField::new(app_state.clone())),
-        ));
-        builder.finish(root_view)
-    };
+    let mut ui_state = app_state.lock_ui_state();
 
-    screen.focus_next();
-
-    domtui::default_event_loop(terminal, &mut screen)?;
-
-    Ok(())
+    'event_loop: loop {
+        match &ui_state.current_screen {
+            Screen::MainScreen => ui_state.main_screen.render(terminal)?,
+            Screen::HelpScreen => {
+                let paragraph = domtui::views::Paragraph::new(include_str!("help_page_text.txt"))
+                    .block(borders(White).title("HELP (<ESC> TO GO BACK)"));
+                domtui::render(terminal, paragraph)?
+            }
+        }
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            continue 'event_loop;
+        }
+        match event::read().unwrap() {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: _,
+            }) => {
+                break 'event_loop Ok(());
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: _,
+            }) => {
+                match &mut ui_state.current_screen {
+                    screen @ Screen::MainScreen => *screen = Screen::HelpScreen,
+                    screen @ Screen::HelpScreen => *screen = Screen::MainScreen,
+                }
+                continue 'event_loop;
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: _,
+            }) => {
+                match &mut ui_state.current_screen {
+                    Screen::MainScreen => (),
+                    screen @ Screen::HelpScreen => *screen = Screen::MainScreen,
+                }
+                continue 'event_loop;
+            }
+            event => {
+                match &mut ui_state.current_screen {
+                    Screen::MainScreen => ui_state.main_screen.handle_event(event),
+                    Screen::HelpScreen => (),
+                }
+                continue 'event_loop;
+            }
+        }
+    }
 }
 
 fn borders(fg: Color) -> Block<'static> {
